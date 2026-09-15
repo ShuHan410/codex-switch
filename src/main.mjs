@@ -3,13 +3,15 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { Pool, Failure, nameCheck, credentialIdentity, privateDir, prepareHome, native, authArgs, probe, buckets, headroom, readJSON } from './core.mjs';
 
-const help = `codex-switch 0.3.2 — ChatGPT subscription accounts for Codex CLI
+const help = `codex-switch 0.4.0 — ChatGPT subscription accounts for Codex CLI
 
   login NAME [--device-auth]          Official login, then register account
   import NAME [--source-home PATH]    Copy an existing login into a managed home
   list [--json] [--codex-home PATH]   Accounts, cached quota, and native login marker
   usage [NAME | --all] [--json] [--codex-home PATH]  Check quota and native login
   use NAME [--codex-home PATH]        Replace native login and select account
+  rename OLD_NAME NEW_NAME           Rename a registered account
+  remove NAME                        Remove from pool; keep recoverable local data
   auto [--min-remaining PERCENT] [--poll-interval SECONDS] [--codex-home PATH] [--once]
                                      Monitor native login and replace auth.json
   run [--account NAME | --auto] [--min-remaining PERCENT] [--poll-interval SECONDS] [-- CODEX_ARGS...]
@@ -70,7 +72,8 @@ function show(accounts, selected, json, detail = false, native = { state: 'unkno
         const w = b[kind]; if (!w) continue;
         const date = Number.isFinite(w.resetsAt) ? new Date(w.resetsAt * 1000) : null;
         const reset = date && Number.isFinite(date.getTime()) ? date.toLocaleString() : '?';
-        console.log(`    ${clean(b.limitId)} ${durationLabel(w.windowDurationMins)}: ${clean(w.usedPercent)}% used; resets=${reset}${a.state === 'busy' || a.state === 'unknown' || a.state === 'needs-login' ? ' (cached; not currently verified)' : ''}`);
+        const left = Number.isFinite(w.usedPercent) && w.usedPercent >= 0 && w.usedPercent <= 100 ? Number((100 - w.usedPercent).toFixed(6)) : '?';
+        console.log(`    ${clean(b.limitId)} ${durationLabel(w.windowDurationMins)}: ${left}% left; resets=${reset}${a.state === 'busy' || a.state === 'unknown' || a.state === 'needs-login' ? ' (cached; not currently verified)' : ''}`);
       }
     }
   }
@@ -89,7 +92,7 @@ export async function main(argv = process.argv.slice(2)) {
   try {
     const args = [...argv]; const command = args.shift();
     if (!command || ['help', '--help', '-h'].includes(command)) { console.log(help); return; }
-    if (command === '--version') { console.log('codex-switch 0.3.2'); return; }
+    if (command === '--version') { console.log('codex-switch 0.4.0'); return; }
     const pool = new Pool();
     const original = path.resolve(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'));
     if (command === 'list' || command === 'usage') {
@@ -123,21 +126,22 @@ export async function main(argv = process.argv.slice(2)) {
         } finally { fs.closeSync(fd); }
         if (credentialIdentity(stage).identity !== identity.identity || credentialIdentity(source).identity !== identity.identity)
           throw new Failure('Source login changed during import; retry after login completes.');
-        const a = pool.add(name, stage, true, { destination: path.join(pool.dir(name), 'codex-home') });
+        const a = pool.add(name, stage, true, { destination: pool.newHome(name) });
         console.log(`Imported ${a.name} into independent managed storage. Source login unchanged. Run codex-switch usage ${a.name}.`);
       } finally { if (stage) fs.rmSync(stage, { recursive: true, force: true }); release(); }
     } else if (command === 'login') {
       const device = flag(args, '--device-auth');
       const name = nameCheck(args.shift()); none(args);
-      const existing = pool.names().includes(name) ? pool.get(name) : null;
+      let existing = pool.names().includes(name) ? pool.get(name) : null;
       if (existing && !existing.managed)
         throw new Failure('This account uses your original Codex home. Re-login there with codex login, then run usage.');
       privateDir(pool.dir(name));
-      const home = existing?.home || path.join(pool.dir(name), 'codex-home');
+      const home = existing?.home || pool.newHome(name);
       const release = pool.accountLock(name);
       let stage;
       try {
         if (!existing && pool.names().includes(name)) throw new Failure('Account was registered by another process; retry with its existing name.');
+        if (existing) existing = pool.revalidate(existing);
         stage = fs.mkdtempSync(path.join(pool.dir(name), '.login-'));
         prepareHome(pool, name, existing ? home : original, stage);
         const code = await native(stage, ['login', ...authArgs, ...(device ? ['--device-auth'] : [])], { cwd: stage });
@@ -153,6 +157,14 @@ export async function main(argv = process.argv.slice(2)) {
           console.log(`Registered ${a.name}. Run codex-switch usage ${a.name} to check quota.`);
         }
       } finally { if (stage) fs.rmSync(stage, { recursive: true, force: true }); release(); }
+    } else if (command === 'rename') {
+      const name = nameCheck(args.shift()); const next = nameCheck(args.shift()); none(args);
+      pool.rename(name, next);
+      console.log(`Renamed ${name} to ${next}. Credentials and native login unchanged.`);
+    } else if (command === 'remove') {
+      const name = nameCheck(args.shift()); none(args);
+      const archive = pool.remove(name);
+      console.log(`Removed ${name} from the pool. Native login unchanged. Credentials/history retained; recovery record: ${archive}`);
     } else if (command === 'use') {
       const home = path.resolve(take(args, '--codex-home') || original);
       const name = nameCheck(args.shift()); none(args);
@@ -210,6 +222,7 @@ export async function main(argv = process.argv.slice(2)) {
       const a = pool.get(name);
       const release = pool.accountLock(a.name);
       try {
+        pool.revalidate(a);
         if (credentialIdentity(a.home).identity !== a.identity) throw new Failure('Stored login identity changed; refusing to launch another account.');
         console.error(`codex-switch: ${a.name}`);
         process.exitCode = await native(a.home, [...authArgs, ...forwarded]);

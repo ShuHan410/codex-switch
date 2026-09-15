@@ -1,3 +1,22 @@
+# Remaining quota and pool editing (0.4.0) — 2026-09-16
+
+Text usage displays `100 - usedPercent` as `% left`; JSON raw API fields
+remain compatible. `rename OLD NEW` changes metadata and the selected label,
+without moving homes. `remove NAME` unregisters the record into private
+`removed/NAME-UUID.json`, clears a matching default, and retains credentials,
+history and native login. Reusing a name allocates a fresh home when needed.
+
+Account/settings locks protect edits; post-lock identity/home validation rejects
+stale registrations. Probe failures cannot recreate removed records. Tests use
+synthetic credentials and temporary pools, including remaining display, rename,
+remove, native marker after removal, busy/collision rejection, retained-home
+name reuse, and stale-query resurrection prevention.
+
+`npm test`: exit 0, 46 passed, 0 failed. No real account was renamed, removed,
+logged out or switched during this update; no live quota API call was needed.
+Independent source review and a separate test run passed (46/46, exit 0);
+`git diff --check` passed (exit 0).
+
 # Native permissions and active marker (0.3.2) — 2026-09-15
 
 Observed native home: owned by current uid, mode 775. The old 0022 guard rejected

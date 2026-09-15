@@ -48,7 +48,7 @@ export class SocketRpc extends EventEmitter {
   }
   async initialize() {
     await this.opened;
-    await this.request('initialize', { clientInfo: { name: 'codex_switch_live', version: '0.3.2' }, capabilities: { experimentalApi: true } });
+    await this.request('initialize', { clientInfo: { name: 'codex_switch_live', version: '0.4.0' }, capabilities: { experimentalApi: true } });
     this.send({ method: 'initialized', params: {} });
   }
   fail() {

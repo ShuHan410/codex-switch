@@ -1,6 +1,6 @@
 # codex-switch
 
-終端機 Codex 訂閱帳號管理器，v0.3.2。需要 Linux、Node.js 22+、Codex CLI。
+終端機 Codex 訂閱帳號管理器，v0.4.0。需要 Linux、Node.js 22+、Codex CLI。
 本機已用 Codex CLI 0.154.0 驗證。WebSocket 依賴固定為 `ws@8.21.3`。
 
 ## 開始使用
@@ -210,7 +210,10 @@ codex-switch list --json
 
 `usage` 透過本機 `codex app-server` 的官方 JSON-RPC 介面查詢；
 沒有啟動模型 turn，也不透過解析 TUI 畫面或未公開 HTTP endpoint。
-只顯示 quota window，用量百分比不是可精確換算的剩餘 token 數。
+文字輸出顯示剩餘百分比，例如 `5h: 80% left`（原本為 `20% used`）；
+`usage` 的快取額度也使用 `left`。未知或無效數字顯示 `?% left`。
+百分比不是可精確換算的剩餘 token 數。`--json` 保留原始 API
+`limits.*.usedPercent` 欄位相容性，`remainingPercent` 則是最少剩餘百分比。
 
 | 狀態 | 意義 |
 | --- | --- |
@@ -248,11 +251,34 @@ Access token 到期本身不代表登入失效：刷新由 Codex 管理。
 門檻都可用 `--min-remaining` 調整。尚有額度且剩餘剛好等於門檻時不切換；
 低於門檻或已用盡才觸發。兩者都不會退回使用未確認額度的替代帳號。
 
+## 帳號改名與移除
+
+```sh
+codex-switch rename second adam
+codex-switch remove adam
+```
+
+`rename` 更改池內名稱，預設選擇也會跟著更新；新名稱不能與現有名稱重複。
+登入憑證、對話與 home 路徑不移動，也不會改寫原生登入檔。
+
+`remove` 將指定帳號移出帳號池，之後不再出現在 `list`／`usage --all`，
+也不再參與自動切換。若它是預設選擇，預設值會清除；請用 `use` 或
+`run --account NAME` 明確選擇其他帳號。移除不等於登出或撤銷授權：原生 Codex
+登入保持不變，因此移除目前帳號後，原生身分會顯示 `unregistered`。
+
+這是可復原的移除，不是憑證抹除：登入憑證與對話仍保留在原 home，
+帳號紀錄移至池目錄的 `removed/NAME-UUID.json`，指令會印出位置。
+可用 `import NAME --source-home 原home路徑` 重新加入仍有效的登入。
+改名或移除後可重用舊名稱；若舊 home 存在，新登入會建立帶 UUID 的
+獨立 home，避免覆寫保留資料。請勿僅依目錄名稱判斷帳號歸屬。
+
+帳號被本工具鎖定使用時，改名與移除會拒絕執行；請結束該次操作後重試。
+
 ## 使用界線
 
 - `run --auto` 監測隨該次終端啟動／結束；`auto` 則在 B 終端前景運行，
   直到 Ctrl-C。兩者都不安裝常駐系統服務。
-- 不含提醒、工作重送、自動接續、shell 攔截、刪除帳號或搬移舊對話。
+- 不含提醒、工作重送、自動接續、shell 攔截、永久抹除憑證或搬移舊對話。
 - 每帳號同時只允許一個本工具的 run/login/query，避免刷新與登入競爭。
   原生 `codex` 不受這個鎖限制。執行中查詢會回報 busy。
 - `run` 模式的終端機 Ctrl-C 由原生 Codex 處理；若要從其他程序停止

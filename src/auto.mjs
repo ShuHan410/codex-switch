@@ -29,6 +29,8 @@ function backupCredential(pool, snapshot) {
 
 // Caller holds the native-home lock and all affected account locks.
 export function switchNative(pool, home, current, outgoing, candidate, backup = s => backupCredential(pool, s)) {
+  candidate = pool.revalidate(candidate);
+  if (current) current = pool.revalidate(current);
   if (!candidate.managed || fs.realpathSync(candidate.home) === home)
     throw new Failure('Choose an independently managed account created by login or import.');
   const incoming = credentialSnapshot(candidate.home);
@@ -91,12 +93,13 @@ export class NativeAuto {
     let release;
     try {
       const initial = credentialSnapshot(this.home);
-      const current = this.pool.names().map(name => this.pool.get(name)).find(a => a.identity === initial.identity);
+      let current = this.pool.names().map(name => this.pool.get(name)).find(a => a.identity === initial.identity);
       if (!current || !current.managed || fs.realpathSync(current.home) === this.home) {
         this.record({ state: 'unregistered', active: null, remainingPercent: null,
           error: 'Native login needs an independent managed account in the pool.' }); return;
       }
       release = this.pool.accountLock(current.name);
+      current = this.pool.revalidate(current);
       // Probe the actual native credentials, not the possibly older pool copy.
       // Save only quota metadata back to the managed record, keeping its home.
       const nativePool = {

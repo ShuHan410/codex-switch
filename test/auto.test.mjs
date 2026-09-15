@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { spawn, spawnSync } from 'node:child_process';
-import { Pool } from '../src/core.mjs';
+import { Pool, probe } from '../src/core.mjs';
 import { NativeAuto } from '../src/auto.mjs';
 
 const future = () => Date.now() / 1000 + 3600;
@@ -29,6 +29,33 @@ function writeAuth(home, bytes) {
 function limits(remaining) {
   return { rateLimits: { primary: { usedPercent: 100 - remaining, resetsAt: future() } } };
 }
+
+test('removed names can be reused without overwriting retained homes', t => {
+  const f = fixture(t);
+  const retained = path.join(f.pool.dir('alpha'), 'codex-home');
+  writeAuth(retained, authBytes('retained'));
+  f.pool.remove('alpha');
+  const destination = f.pool.newHome('alpha');
+  assert.notEqual(destination, retained);
+  const stage = path.join(f.root, 'reuse-stage'); writeAuth(stage, authBytes('replacement'));
+  f.pool.add('alpha', stage, true, { destination });
+  assert.equal(fs.readFileSync(path.join(retained, 'auth.json'), 'utf8'), authBytes('retained'));
+  assert.equal(f.pool.get('alpha').home, destination);
+});
+
+test('probe cannot resurrect a removed record and stale snapshots reject name reuse', async t => {
+  const f = fixture(t); const old = f.pool.get('alpha');
+  const acquire = f.pool.accountLock.bind(f.pool);
+  f.pool.accountLock = name => {
+    f.pool.accountLock = acquire;
+    f.pool.remove(name);
+    return acquire(name);
+  };
+  await assert.rejects(probe(f.pool, 'alpha'));
+  assert.deepEqual(f.pool.names(), ['beta']);
+  f.pool.rename('beta', 'alpha');
+  assert.throws(() => f.pool.revalidate(old), /registration changed/);
+});
 
 function files(dir) {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
@@ -189,6 +216,43 @@ function cliEnv(f) {
   return { ...process.env, CODEX_SWITCH_HOME: f.pool.root, CODEX_HOME: f.native,
     CODEX_SWITCH_CODEX: fakeCodex, CODEX_SWITCH_TEST_REMAINING_BY_SUB: JSON.stringify({ alpha: 4, beta: 80 }) };
 }
+
+test('usage prints remaining percentages instead of used', t => {
+  const f = fixture(t);
+  const result = spawnSync(process.execPath, [cli, 'usage', '--all'], { env: cliEnv(f), encoding: 'utf8', timeout: 10000 });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /4% left/); assert.match(result.stdout, /80% left/);
+  assert.doesNotMatch(result.stdout, /% used/);
+});
+
+test('rename updates label and default without moving credentials; removal unregisters without logout', t => {
+  const f = fixture(t);
+  const run = args => spawnSync(process.execPath, [cli, ...args], { env: cliEnv(f), encoding: 'utf8', timeout: 5000 });
+  let result = run(['rename', 'alpha', 'adam']); assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(f.pool.names(), ['adam', 'beta']); assert.equal(f.pool.selected(), 'adam');
+  assert.equal(f.pool.get('adam').home, f.homes.alpha);
+  assert.equal(fs.readFileSync(path.join(f.homes.alpha, 'auth.json'), 'utf8'), f.canonical.alpha);
+  assert.match(run(['list']).stdout, /^\* adam /m);
+  result = run(['remove', 'adam']); assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(f.pool.names(), ['beta']); assert.equal(f.pool.selected(), undefined);
+  assert.equal(fs.readFileSync(path.join(f.native, 'auth.json'), 'utf8'), f.nativeBefore);
+  assert.equal(fs.readFileSync(path.join(f.homes.alpha, 'auth.json'), 'utf8'), f.canonical.alpha);
+  assert.match(run(['list']).stdout, /unregistered/);
+  const archive = fs.readdirSync(path.join(f.pool.root, 'removed'));
+  assert.equal(archive.length, 1);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(f.pool.root, 'removed', archive[0]))).name, 'adam');
+});
+
+test('rename/remove reject busy accounts, collisions and invalid names without losing records', t => {
+  const f = fixture(t);
+  assert.throws(() => f.pool.rename('alpha', 'beta'));
+  assert.throws(() => f.pool.rename('alpha', '../bad'));
+  const release = f.pool.accountLock('alpha');
+  try { assert.throws(() => f.pool.rename('alpha', 'adam')); assert.throws(() => f.pool.remove('alpha')); }
+  finally { release(); }
+  assert.deepEqual(f.pool.names(), ['alpha', 'beta']); assert.equal(f.pool.selected(), 'alpha');
+  assert.throws(() => f.pool.remove('missing'));
+});
 
 test('use changes native auth and selection, preserves history, and saves outgoing credentials', t => {
   const f = fixture(t);

@@ -66,14 +66,62 @@ export class Pool {
     return value;
   }
   save(account) { atomicJSON(path.join(this.dir(account.name), 'account.json'), account); }
+  revalidate(account) {
+    const current = this.get(account.name);
+    if (current.identity !== account.identity || current.home !== account.home)
+      throw new Failure('Account registration changed; retry the command.');
+    return current;
+  }
   selected() { return readJSON(path.join(this.root, 'settings.json'), {}).selected; }
   select(name) {
-    this.get(name);
     const release = lock(path.join(this.root, '.settings-lock'));
-    try { atomicJSON(path.join(this.root, 'settings.json'), { selected: name }); }
+    try { this.get(name); atomicJSON(path.join(this.root, 'settings.json'), { selected: name }); }
     finally { release(); }
   }
   accountLock(name) { return lock(path.join(this.dir(name), '.lock')); }
+  newHome(name) {
+    const base = path.join(this.dir(name), 'codex-home');
+    return fs.existsSync(base) ? `${base}-${crypto.randomUUID()}` : base;
+  }
+  rename(name, next) {
+    nameCheck(name); nameCheck(next);
+    if (name === next) { this.get(name); return; }
+    const release = lock(path.join(this.root, '.settings-lock'));
+    const held = [];
+    try {
+      let account = this.get(name);
+      if (this.names().includes(next)) throw new Failure('That account name is already registered.');
+      privateDir(this.dir(next));
+      for (const n of [name, next].sort()) held.push(this.accountLock(n));
+      account = this.revalidate(account);
+      // Keep the home path stable: saved sessions and shared skill links use it.
+      this.save({ ...account, name: next });
+      const selected = this.selected() === name;
+      try {
+        if (selected) atomicJSON(path.join(this.root, 'settings.json'), { selected: next });
+        fs.unlinkSync(path.join(this.dir(name), 'account.json'));
+      } catch (e) {
+        if (selected) atomicJSON(path.join(this.root, 'settings.json'), { selected: name });
+        fs.unlinkSync(path.join(this.dir(next), 'account.json')); throw e;
+      }
+    } finally { for (const unlock of held.reverse()) unlock(); release(); }
+  }
+  remove(name) {
+    nameCheck(name);
+    const release = lock(path.join(this.root, '.settings-lock'));
+    let accountRelease;
+    try {
+      this.get(name); accountRelease = this.accountLock(name);
+      const archive = path.join(this.root, 'removed'); privateDir(archive);
+      const destination = path.join(archive, `${name}-${crypto.randomUUID()}.json`);
+      // Soft removal: preserve credentials/history at their stable original path.
+      fs.renameSync(path.join(this.dir(name), 'account.json'), destination);
+      try {
+        if (this.selected() === name) atomicJSON(path.join(this.root, 'settings.json'), {});
+      } catch (e) { fs.renameSync(destination, path.join(this.dir(name), 'account.json')); throw e; }
+      return destination;
+    } finally { accountRelease?.(); release(); }
+  }
   add(name, home, managed, { destination } = {}) {
     nameCheck(name);
     const identity = credentialIdentity(home);
@@ -243,15 +291,18 @@ export function choose(accounts, minRemaining = 10) {
 }
 export async function probe(pool, name, { locked = false } = {}) {
   let release;
-  const initial = pool.get(name);
+  let initial = pool.get(name);
   try { release = locked ? () => {} : pool.accountLock(name); }
   catch (e) { if (e.state === 'busy') return { ...initial, state: 'busy', error: e.message }; throw e; }
   let rpc;
+  let registered = false;
   let interrupted;
   const stop = () => { interrupted = 'interrupted'; rpc?.fail('Account query interrupted.'); rpc?.child.kill('SIGTERM'); };
   const terminate = () => { stop(); interrupted = 'terminated'; };
   process.on('SIGINT', stop); process.on('SIGTERM', terminate);
   try {
+    initial = pool.get(name); // Rename/remove may have completed before lock acquisition.
+    registered = true;
     const local = credentialIdentity(initial.home);
     if (local.identity !== initial.identity) throw new Failure('Login identity changed outside codex-switch; use the original account or register a new name.', 'identity-changed');
     rpc = new Rpc(initial.home);
@@ -265,6 +316,7 @@ export async function probe(pool, name, { locked = false } = {}) {
       plan: result.account.planType, limits, checkedAt: new Date().toISOString(), error: undefined };
     pool.save(current); return current;
   } catch (e) {
+    if (!registered) throw e;
     if (interrupted) throw new Failure('Account query interrupted.', interrupted);
     const current = { ...initial, state: e instanceof Failure ? e.state : 'unknown',
       error: e instanceof Failure ? e.message : 'Account check failed.', checkedAt: new Date().toISOString() };
