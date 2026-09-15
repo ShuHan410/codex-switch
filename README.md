@@ -3,20 +3,129 @@
 終端機 Codex 訂閱帳號管理器，v0.4.0。需要 Linux、Node.js 22+、Codex CLI。
 本機已用 Codex CLI 0.154.0 驗證。WebSocket 依賴固定為 `ws@8.21.3`。
 
-## 開始使用
+這是非官方的本機工具，與 OpenAI 無隸屬關係。不提供帳號、不分享訂閱，
+也不增加或重設服務額度；請只管理你有權使用的帳號，遵守服務與組織規範。
+不支援 API key、VS Code extension 或桌面 App。
+
+## 功能一覽
+
+- 透過官方登入新增帳號，或匯入目前已登入的帳號。
+- 查看各帳號剩餘額度，以 `5h`／`7d` 等時長和 `% left` 顯示。
+- 手動切換原生 Codex 登入；依實際登入檔標示目前帳號。
+- 在另一個終端監控用量，低於門檻時自動切換可用帳號。
+- 帳號改名、可復原移除，以及指定帳號啟動獨立 Codex home。
+
+**重要：**`use`／`auto` 修改本機登入檔，不保證已開啟的 Codex session
+會即時採用新帳號。憑證保存在本機，靠檔案權限保護，並非加密保管庫。
+
+## 安裝
+
+### 環境需求
+
+- Linux；macOS／Windows 尚未驗證，不宣稱支援。
+- Node.js 22 以上、npm、Git。
+- 已安裝且能執行的 Codex CLI，以及自己的 ChatGPT 訂閱帳號。
+- 檔案式 `auth.json` 登入；keyring 儲存模式不支援。
+
+先確認環境：
 
 ```sh
+node --version
+npm --version
+git --version
+codex --version
+```
+
+本工具不會替你安裝 Codex CLI。額度查詢與登入需要網路。
+
+### 從 GitHub 原始碼安裝
+
+將 `YOUR_GITHUB_USERNAME` 換成專案擁有者的 GitHub 名稱。
+以下以 Bash、全新安裝且目標路徑尚不存在為例，不需要 sudo：
+
+```sh
+mkdir -p "$HOME/.local/share" "$HOME/.local/bin"
+git clone https://github.com/YOUR_GITHUB_USERNAME/codex-switch.git "$HOME/.local/share/codex-switch"
+cd "$HOME/.local/share/codex-switch"
+npm ci --ignore-scripts
+ln -s "$PWD/bin/codex-switch.mjs" "$HOME/.local/bin/codex-switch"
+export PATH="$HOME/.local/bin:$PATH"
+codex-switch --version
+codex-switch --help
+```
+
+若 `ln` 顯示檔案已存在，請先檢查 `ls -l "$HOME/.local/bin/codex-switch"`，
+不要直接覆寫既有安裝。保留 clone 的目錄，因為指令連結依賴它與其中的依賴套件。
+
+若 PATH 尚未包含 `~/.local/bin`，在 `~/.bashrc` 加入下列一行，
+再開啟新終端（或執行 `source ~/.bashrc`）：
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Zsh 使用者將同一行加入 `~/.zshrc`。設定完成後，在任何 repository
+都可以呼叫 `codex-switch`，不必每個專案安裝一次。
+
+目前提供原始碼安裝；`package.json` 的 `private: true` 用來防止意外
+發布 npm 套件，不妨礙從 GitHub clone 後安裝。
+
+### 更新與移除程式
+
+更新前先停止本工具的 `auto`／`run` 程序，然後在 clone 目錄執行：
+
+```sh
+git pull --ff-only
+npm ci --ignore-scripts
+codex-switch --version
+```
+
+若有本機程式修改，先處理 Git 衝突，不要強制覆蓋。
+解除安裝時，確認 `~/.local/bin/codex-switch` 是上述建立的連結後移除該連結，
+再移除程式 clone 目錄即可。這不會刪除帳號池或原生登入；
+帳號池內含憑證，若要清除請另外確認與處理，不要誤刪整個 `~/.codex`。
+
+## 開始使用
+
+已有原生 Codex 登入時，先將它加入池內；名稱由你自訂：
+
+```sh
+codex-switch import personal
+codex-switch usage personal
+```
+
+或者透過工具登入新增帳號（不需要先執行原生 `codex login`）：
+
+```sh
+codex-switch login work
 codex-switch list
 codex-switch usage --all
-codex-switch login second --device-auth
-codex-switch usage --all
-codex-switch use second
-codex-switch run
+codex-switch use work
+codex
 ```
 
 `login` 呼叫官方 Codex 登入。依終端機提示開啟瀏覽器、登入你要新增的
-ChatGPT 帳號並輸入 device code；也可以省略 `--device-auth` 使用一般瀏覽器登入。
+ChatGPT 帳號；也可使用 `codex-switch login work --device-auth` 的裝置碼流程。
 成功後工具自動收錄帳號。不要把 token 貼到終端機或聊天中。
+`personal`、`work`、`second`、`roman` 都只是範例名稱，沒有特殊含義；
+請換成自己池內的名稱。名稱長度 1–48，使用英文字母、數字、`_` 或 `-`，
+第一個字元必須是英文字母或數字。
+
+常用指令：
+
+| 指令 | 用途 |
+| --- | --- |
+| `import NAME` | 保存目前登入，來源不變 |
+| `login NAME` | 新增登入或重新授權同名帳號 |
+| `list` | 列出帳號與實際原生登入標記，不查詢最新額度 |
+| `usage NAME`／`usage --all` | 查詢單一／全部帳號剩餘額度 |
+| `use NAME` | 切換原生登入並設定工具的預設帳號 |
+| `auto`／`status --auto` | 原生登入自動監控／查看監控紀錄 |
+| `rename OLD NEW`／`remove NAME` | 改名／移出帳號池 |
+| `run --account NAME` | 使用該帳號的獨立 home 啟動 Codex |
+| `doctor` | 檢查本機憑證身分與 Codex 可執行性，不驗證伺服器授權 |
+
+不帶名稱的 `usage` 與 `usage --all` 都會查詢整個帳號池。
 
 另一種實驗性模式 `run --auto`：啟動專用 Codex 會話並監測、切換。
 若你使用一般 `codex`，請使用下方「原生 Codex」章節的 `auto`：
@@ -146,18 +255,18 @@ Codex；工具不改這些設定，也不繞過限制。請使用 file 儲存模
 因目前確認介面無法區分它們；仍可使用手動模式。
 自動模式目前只支援互動式終端，非互動 `exec`／`review` 請使用手動模式。
 
-## 本機安裝與資料
+## 本機資料與安全
 
-- 程式：`~/.codex/tools/codex-switch/`
+- 程式：你 clone 的目錄（上述安裝範例為 `~/.local/share/codex-switch/`）
 - 指令：`~/.local/bin/codex-switch`，連結到程式的 `bin/codex-switch.mjs`
 - 帳號池：`~/.codex/account-pool/`（目錄 700、資料檔 600）
 - 新帳號：`~/.codex/account-pool/accounts/NAME/codex-home/`
 - 自動模式：`~/.codex/account-pool/live/`（對話、socket、狀態紀錄）
 
-你的 `.bashrc` 和 `.profile` 已包含 `~/.local/bin`，不需要再修改。
-其他主機安裝時，先在程式目錄執行 `npm ci --ignore-scripts`，
-再把 `bin/codex-switch.mjs` 的絕對路徑連結到 PATH 中即可。
-程式目錄可獨立使用 Git 管理；帳號池位於程式目錄外，不會被納入版本控制。
+程式與帳號資料分離；預設帳號池不在 clone 目錄內。
+上傳程式只需要上傳這個 Git repository，**不要上傳整個 `~/.codex`**。
+`auth.json`、帳號池、登入備份、對話與含私人資訊的診斷輸出都不應公開。
+備份和移除後保留的 home 仍含有效憑證；檔案權限不等於加密。
 
 `CODEX_SWITCH_HOME` 可指定另一個帳號池；`CODEX_SWITCH_CODEX` 可指定 Codex
 執行檔。這兩項主要供測試或多套安裝使用。請勿把帳號池設在 Git repository 內。
@@ -295,7 +404,8 @@ codex-switch remove adam
 ## 開發與驗證
 
 ```sh
-cd ~/.codex/tools/codex-switch
+# 先切換到你的 clone 目錄
+npm ci --ignore-scripts
 npm test
 node scripts/verify-live-protocol.mjs
 # 可選：開啟假帳號的原生終端，不輸入 prompt，按 Ctrl-C 結束
@@ -313,3 +423,27 @@ node --check src/live.mjs
 
 - [App Server 帳號及額度介面](https://learn.chatgpt.com/docs/app-server#auth-endpoints)
 - [憑證儲存](https://learn.chatgpt.com/docs/auth#credential-storage)
+
+## 授權與發布
+
+目前尚未附上 LICENSE，專案維護者需在正式開源發布前選定授權。
+公開 GitHub repository 不等於已授予完整的開源使用、修改與散布權利；
+請參考 [GitHub 授權說明](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/licensing-a-repository)。
+本節不代表已套用任何授權條款。
+
+維護者首次發布時，先在 GitHub 建立空的 `codex-switch` repository，
+不要預先建立 README、LICENSE 或 `.gitignore`，再從本機程式目錄執行：
+
+```sh
+git status
+git remote -v
+# 僅在尚未設定 origin 時執行；替換成你的實際 repository URL
+git remote add origin https://github.com/YOUR_GITHUB_USERNAME/codex-switch.git
+git push -u origin main
+```
+
+先完成 GitHub 的 Git 認證；不要將存取 token 放進 URL 或 README。
+發布前檢查 `git ls-files` 與歷史紀錄，確認沒有私人憑證、帳號資料或
+不想公開的內容。Git 提交中的作者姓名與 email 也會公開。
+將上方安裝 URL 的佔位名稱換成實際擁有者，再提交文件變更。
+詳細流程見 [GitHub：上傳既有本機程式](https://docs.github.com/en/migrations/importing-source-code/using-the-command-line-to-import-source-code/adding-locally-hosted-code-to-github)。
