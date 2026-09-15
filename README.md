@@ -1,6 +1,6 @@
 # codex-switch
 
-終端機 Codex 訂閱帳號管理器，v0.2.0。需要 Linux、Node.js 22+、Codex CLI。
+終端機 Codex 訂閱帳號管理器，v0.2.1。需要 Linux、Node.js 22+、Codex CLI。
 本機已用 Codex CLI 0.154.0 驗證。WebSocket 依賴固定為 `ws@8.21.3`。
 
 ## 開始使用
@@ -94,15 +94,26 @@ codex-switch doctor
 ```
 
 只支援 `auth.json` 檔案式 ChatGPT 登入，沒有 API key 或 keyring 匯入。
-匯入是登記原始儲存位置，因此 token 刷新後仍只維護一份憑證。
+`import NAME` 預設讀取目前 `CODEX_HOME`（未設定時為 `~/.codex`），
+將現有登入複製到帳號池的獨立 home；不開啟瀏覽器、不修改來源登入。
+後續來源改登入別的帳號，不會覆蓋已匯入的憑證。匯入後與 `login` 新增的
+帳號一樣支援 `usage`、`run`、自動模式及 `login NAME` 重新授權。
+匯入只驗證本機檔案，初始狀態為 `unchecked`；用 `usage NAME` 查詢有效性。
+既有名稱或重複身分會被拒絕，不會覆蓋帳號池中的憑證。
 同一 ChatGPT 身分與 workspace 不可重複登記。
+
+複製的是當下的登入快照，不保證永久授權。來源與匯入帳號若同時刷新同一組
+refresh token，仍可能使其中一份失效；匯入後建議改用 `codex-switch run`
+操作該帳號。工具不會停止原本正在執行的 Codex；需要完全獨立的授權時，
+使用 `codex-switch login NAME` 重新登入。撤銷／過期授權也需要重新登入。
 
 所有登入會先在暫存目錄完成，成功且通過帳號檢查後才保存。
 新帳號重新登入會確認是原來的身分後才替換憑證；
-登入錯帳號時保留原憑證。透過 `import` 登記的帳號必須在其原始 Codex home
+登入錯帳號時保留原憑證。**0.2.0 及更舊版本**透過 `import` 登記的帳號仍須在其原始 Codex home
 用原生 `codex login` 重新登入，工具不會替它執行重新登入。
 若在原始 home 改成另一個身分，工具會標示 `identity-changed` 並拒絕啟動；
 請恢復原身分，或用獨立 `codex-switch login NEW_NAME` 新增帳號。
+此版本不會自動搬移舊版的引用式匯入紀錄。
 
 新帳號建立時複製 `config.toml` 和 `*.config.toml`，之後各自維護。
 若某設定檔含有 workspace 綁定或自訂 backend，工具會提示並略過整份檔案，

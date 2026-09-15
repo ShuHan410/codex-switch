@@ -1,3 +1,23 @@
+# Managed import (0.2.1) — 2026-09-15
+
+`import NAME [--source-home PATH]` now stages a private credential snapshot and
+registers a managed home using the same commit path as `login`. Source credentials
+are never rewritten or removed; source sessions are not stopped. Existing names
+and duplicate identities are refused, not overwritten. Historical unmanaged
+imports are unchanged (no implicit migration).
+
+`npm test`: exit 0, 24 passed, 0 failed. New synthetic tests cover source
+preservation, independent credentials after source login replacement, managed
+login renewal, mode 600, duplicate cleanup, and insecure-source refusal. Native
+run binding now checks the independent imported home rather than the old source.
+`codex-switch --version`: exit 0, `codex-switch 0.2.1`.
+
+No real credentials were imported during development. Live validity and concurrent
+refresh-token behavior are not established by an offline snapshot; copied and
+source credentials initially share an authorization. Production seamless-switch
+acceptance remains deferred by the owner. A fresh official login is still needed
+if that authorization becomes invalid.
+
 # V2 verification — 2026-09-15
 
 Environment: Linux, Node v25.8.2, codex-cli 0.154.0, ws 8.21.3.

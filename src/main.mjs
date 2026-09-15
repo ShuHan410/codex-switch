@@ -3,10 +3,10 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { Pool, Failure, nameCheck, credentialIdentity, privateDir, prepareHome, native, authArgs, probe, buckets, headroom, readJSON } from './core.mjs';
 
-const help = `codex-switch 0.2.0 — ChatGPT subscription accounts for Codex CLI
+const help = `codex-switch 0.2.1 — ChatGPT subscription accounts for Codex CLI
 
   login NAME [--device-auth]          Official login, then register account
-  import NAME [--source-home PATH]    Register an existing file login in place
+  import NAME [--source-home PATH]    Copy an existing login into a managed home
   list [--json]                      Accounts and cached status
   usage [NAME | --all] [--json]       Check quota windows (default: all)
   use NAME                           Select account for subsequent runs
@@ -71,7 +71,7 @@ export async function main(argv = process.argv.slice(2)) {
   try {
     const args = [...argv]; const command = args.shift();
     if (!command || ['help', '--help', '-h'].includes(command)) { console.log(help); return; }
-    if (command === '--version') { console.log('codex-switch 0.2.0'); return; }
+    if (command === '--version') { console.log('codex-switch 0.2.1'); return; }
     const pool = new Pool();
     const original = path.resolve(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'));
     if (command === 'list' || command === 'usage') {
@@ -89,10 +89,24 @@ export async function main(argv = process.argv.slice(2)) {
       const name = nameCheck(args.shift()); none(args);
       privateDir(pool.dir(name));
       const release = pool.accountLock(name);
+      let stage;
       try {
-        const a = pool.add(name, source, false);
-        console.log(`Registered ${a.name} in place. Credentials were not copied.`);
-      } finally { release(); }
+        if (pool.names().includes(name)) throw new Failure('That account name is already registered.');
+        const identity = credentialIdentity(source);
+        stage = fs.mkdtempSync(path.join(pool.dir(name), '.import-'));
+        prepareHome(pool, name, source, stage);
+        const fd = fs.openSync(path.join(source, 'auth.json'), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+        try {
+          const s = fs.fstatSync(fd);
+          if (!s.isFile() || s.uid !== process.getuid() || (s.mode & 0o077))
+            throw new Failure('auth.json must be an owned regular file with mode 600.');
+          fs.writeFileSync(path.join(stage, 'auth.json'), fs.readFileSync(fd), { mode: 0o600, flag: 'wx' });
+        } finally { fs.closeSync(fd); }
+        if (credentialIdentity(stage).identity !== identity.identity || credentialIdentity(source).identity !== identity.identity)
+          throw new Failure('Source login changed during import; retry after login completes.');
+        const a = pool.add(name, stage, true, { destination: path.join(pool.dir(name), 'codex-home') });
+        console.log(`Imported ${a.name} into independent managed storage. Source login unchanged. Run codex-switch usage ${a.name}.`);
+      } finally { if (stage) fs.rmSync(stage, { recursive: true, force: true }); release(); }
     } else if (command === 'login') {
       const device = flag(args, '--device-auth');
       const name = nameCheck(args.shift()); none(args);

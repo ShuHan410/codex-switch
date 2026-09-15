@@ -51,6 +51,55 @@ test.after(() => {
   for (const root of tempRoots) fs.rmSync(root, { recursive: true, force: true });
 });
 
+test('import snapshots current login into managed storage and supports later login renewal', { concurrency: false }, async () => {
+  resetEnv(); const root = temp(); const source = path.join(root, 'source'); auth(source, 'imported');
+  process.env.CODEX_HOME = source; process.env.CODEX_SWITCH_HOME = path.join(root, 'pool');
+  process.env.CODEX_SWITCH_CODEX = fakeCodex;
+  process.env.CODEX_SWITCH_TEST_LOG = path.join(root, 'native.log');
+  fs.writeFileSync(path.join(source, 'config.toml'), 'model = "fixture-model"\n');
+  const before = fs.readFileSync(path.join(source, 'auth.json'), 'utf8');
+  const result = await capturedMain(['import', 'saved']); assert.equal(result.code, 0);
+  assert.equal(fs.existsSync(process.env.CODEX_SWITCH_TEST_LOG), false);
+  const pool = new Pool(); const saved = pool.get('saved');
+  assert.equal(saved.managed, true); assert.equal(saved.state, 'unchecked');
+  assert.notEqual(saved.home, source);
+  assert.equal(fs.readFileSync(path.join(saved.home, 'auth.json'), 'utf8'), before);
+  assert.equal(fs.readFileSync(path.join(source, 'auth.json'), 'utf8'), before);
+  assert.equal(fs.statSync(path.join(saved.home, 'auth.json')).mode & 0o777, 0o600);
+  assert.equal(fs.readFileSync(path.join(saved.home, 'config.toml'), 'utf8'), 'model = "fixture-model"\n');
+  auth(source, 'another');
+  assert.equal(credentialIdentity(saved.home).identity, saved.identity);
+  process.env.CODEX_SWITCH_TEST_LOGIN_SUB = 'imported';
+  assert.equal((await capturedMain(['login', 'saved'])).code, 0);
+  assert.equal(credentialIdentity(source).email, 'another@example.test');
+  resetEnv();
+});
+
+test('duplicate import preserves original managed credentials and removes staging files', { concurrency: false }, async () => {
+  resetEnv(); const root = temp(); const source = path.join(root, 'source'); auth(source, 'duplicate');
+  process.env.CODEX_SWITCH_HOME = path.join(root, 'pool');
+  assert.equal((await capturedMain(['import', 'first', '--source-home', source])).code, 0);
+  const pool = new Pool(); const before = fs.readFileSync(path.join(pool.get('first').home, 'auth.json'), 'utf8');
+  assert.equal((await capturedMain(['import', 'other', '--source-home', source])).code, 1);
+  assert.deepEqual(pool.names(), ['first']);
+  assert.deepEqual(fs.readdirSync(pool.dir('other')), []);
+  assert.equal(fs.readFileSync(path.join(pool.get('first').home, 'auth.json'), 'utf8'), before);
+  auth(source, 'different'); process.exitCode = undefined;
+  assert.equal((await capturedMain(['import', 'first', '--source-home', source])).code, 1);
+  assert.equal(fs.readFileSync(path.join(pool.get('first').home, 'auth.json'), 'utf8'), before);
+  resetEnv();
+});
+
+test('import refuses insecure credentials without registering or leaving a copied token', { concurrency: false }, async () => {
+  resetEnv(); const root = temp(); const source = path.join(root, 'source'); auth(source, 'unsafe', 'id', 0o644);
+  process.env.CODEX_SWITCH_HOME = path.join(root, 'pool');
+  assert.equal((await capturedMain(['import', 'unsafe', '--source-home', source])).code, 1);
+  const pool = new Pool(); assert.deepEqual(pool.names(), []);
+  assert.deepEqual(fs.readdirSync(pool.dir('unsafe')), []);
+  assert.equal(fs.statSync(path.join(source, 'auth.json')).mode & 0o777, 0o644);
+  resetEnv();
+});
+
 test('names reject traversal and pool rejects duplicate credential identities', { concurrency: false }, () => {
   const root = temp(); const one = path.join(root, 'one'); const two = path.join(root, 'two');
   auth(one, 'same'); auth(two, 'same');
@@ -108,7 +157,8 @@ test('run binds the selected home, preserves native argv, and scrubs inherited c
   const result = await capturedMain(['run', '--account', 'bound', '--', 'resume', '--last']);
   assert.equal(result.code, 0, result.err.join('\n'));
   const invocation = JSON.parse(fs.readFileSync(log, 'utf8').trim());
-  assert.equal(invocation.codeHome, fs.realpathSync(home));
+  assert.equal(invocation.codeHome, new Pool().get('bound').home);
+  assert.notEqual(invocation.codeHome, fs.realpathSync(home));
   assert.equal(invocation.apiKey, undefined);
   assert.equal(invocation.accessToken, undefined);
   assert.equal(invocation.authLeak, undefined);
