@@ -1,0 +1,44 @@
+#!/usr/bin/env node
+import fs from 'node:fs';
+import readline from 'node:readline';
+
+const args = process.argv.slice(2);
+const log = process.env.CODEX_SWITCH_TEST_LOG;
+const write = value => { if (log) fs.appendFileSync(log, `${JSON.stringify(value)}\n`); };
+
+if (args[0] !== 'app-server') {
+  if (args[0] === 'login' && process.env.CODEX_SWITCH_TEST_LOGIN_SUB) {
+    const sub = process.env.CODEX_SWITCH_TEST_LOGIN_SUB;
+    const accountId = process.env.CODEX_SWITCH_TEST_LOGIN_ACCOUNT_ID || `account-${sub}`;
+    const idToken = `header.${Buffer.from(JSON.stringify({ sub, email: `${sub}@example.test` })).toString('base64url')}.signature`;
+    fs.writeFileSync(`${process.env.CODEX_HOME}/auth.json`, JSON.stringify({ auth_mode: 'chatgpt', tokens: {
+      refresh_token: `renewed-refresh-${sub}`, access_token: `renewed-access-${sub}`, id_token: idToken, account_id: accountId,
+    } }), { mode: 0o600 });
+    fs.chmodSync(`${process.env.CODEX_HOME}/auth.json`, 0o600);
+  }
+  write({ args, codeHome: process.env.CODEX_HOME, apiKey: process.env.OPENAI_API_KEY,
+    accessToken: process.env.CODEX_ACCESS_TOKEN, authLeak: process.env.CODEX_AUTH_TOKEN });
+  process.exit(Number(process.env.CODEX_SWITCH_TEST_EXIT || 0));
+}
+
+const mode = process.env.CODEX_SWITCH_TEST_RPC_MODE || 'ok';
+readline.createInterface({ input: process.stdin }).on('line', line => {
+  const msg = JSON.parse(line);
+  if (msg.method === 'initialize') {
+    if (mode === 'timeout') return;
+    if (mode === 'initialize-error') {
+      process.stdout.write(`${JSON.stringify({ id: msg.id, error: { message: 'server initialization failed' } })}\n`);
+      return;
+    }
+    if (mode === 'null-and-array') process.stdout.write('null\n[]\n');
+    process.stdout.write(`${JSON.stringify({ id: msg.id, result: { protocolVersion: '1' } })}\n`);
+    return;
+  }
+  if (msg.method === 'account/read') {
+    process.stdout.write(`${JSON.stringify({ id: msg.id, result: { account: { type: 'chatgpt', planType: 'test' } } })}\n`);
+    return;
+  }
+  if (msg.method === 'account/rateLimits/read') {
+    process.stdout.write(`${JSON.stringify({ id: msg.id, result: { rateLimits: { primary: { usedPercent: 25, resetsAt: Date.now() / 1000 + 3600 } } } })}\n`);
+  }
+});
