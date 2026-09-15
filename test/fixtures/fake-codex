@@ -39,6 +39,12 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     return;
   }
   if (msg.method === 'account/rateLimits/read') {
-    process.stdout.write(`${JSON.stringify({ id: msg.id, result: { rateLimits: { primary: { usedPercent: 25, resetsAt: Date.now() / 1000 + 3600 } } } })}\n`);
+    let usedPercent = 25;
+    if (process.env.CODEX_SWITCH_TEST_REMAINING_BY_SUB) {
+      const auth = JSON.parse(fs.readFileSync(`${process.env.CODEX_HOME}/auth.json`, 'utf8'));
+      const { sub } = JSON.parse(Buffer.from(auth.tokens.id_token.split('.')[1], 'base64url').toString());
+      usedPercent = 100 - JSON.parse(process.env.CODEX_SWITCH_TEST_REMAINING_BY_SUB)[sub];
+    }
+    process.stdout.write(`${JSON.stringify({ id: msg.id, result: { rateLimits: { primary: { usedPercent, resetsAt: Date.now() / 1000 + 3600 } } } })}\n`);
   }
 });

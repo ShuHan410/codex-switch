@@ -1,3 +1,38 @@
+# Native login monitor (0.3.0) — 2026-09-15
+
+Acceptance: B-terminal `codex-switch auto` immediately checks the native
+file-login account, then waits 30 seconds between rounds. Below 5% remaining,
+select a fresh, managed alternative with at least 5%, preserve outgoing
+credentials, atomically replace native auth.json, and update default selection.
+No session launch/attachment, notifications, restart, resume, or replay.
+
+- `npm test`: exit 0, 36 passed, 0 failed. Twelve new synthetic tests cover
+  actual native identity rather than selected pointer, native-home RPC routing,
+  file replacement and next-round identity, untouched config/history, recoverable
+  backups and permissions, exact threshold, unknown/unregistered/no alternative,
+  busy account, outside login changes, candidate identity changes, coalescing,
+  CLI `auto --once` + `status --auto`, singleton locks and SIGTERM cleanup.
+- Independent review identified a detectable external-login race during backup
+  work. A new synthetic regression reproduced it (exit 1 before the fix);
+  both credential writes now happen only after the post-backup native recheck.
+- `codex-switch --version`: exit 0, `codex-switch 0.3.0`.
+- `node --check src/auto.mjs`, `src/core.mjs`, `src/main.mjs`: exit 0.
+- `git diff --check`: exit 0.
+
+The credential parser now validates an owned, private, regular descriptor opened
+with O_NOFOLLOW/O_NONBLOCK before reading, including both identity and text from
+the same snapshot. Existing import/manual/live tests remain in the suite.
+
+No real native credentials were replaced and no persistent monitor was started
+during development. The CLI integration test invokes a local fake Codex quota
+service and asserts actual synthetic files, not just a selected-account label.
+External token refresh/revocation and quota services are not simulated as proof
+of continued authorization. Ordinary Codex does not honor tool locks; there is
+an unavoidable final read-to-rename race with concurrent external login/refresh.
+No claim about existing sessions adopting the new credentials is made, as
+explicitly excluded by the owner. Keyring/backend/admin policy changes are out
+of scope: only the selected native file-login location is managed.
+
 # Managed import (0.2.1) — 2026-09-15
 
 `import NAME [--source-home PATH]` now stages a private credential snapshot and

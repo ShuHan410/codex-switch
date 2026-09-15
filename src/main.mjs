@@ -3,15 +3,17 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { Pool, Failure, nameCheck, credentialIdentity, privateDir, prepareHome, native, authArgs, probe, buckets, headroom, readJSON } from './core.mjs';
 
-const help = `codex-switch 0.2.1 — ChatGPT subscription accounts for Codex CLI
+const help = `codex-switch 0.3.0 — ChatGPT subscription accounts for Codex CLI
 
   login NAME [--device-auth]          Official login, then register account
   import NAME [--source-home PATH]    Copy an existing login into a managed home
   list [--json]                      Accounts and cached status
   usage [NAME | --all] [--json]       Check quota windows (default: all)
   use NAME                           Select account for subsequent runs
+  auto [--min-remaining PERCENT] [--poll-interval SECONDS] [--codex-home PATH] [--once]
+                                     Monitor native login and replace auth.json
   run [--account NAME | --auto] [--min-remaining PERCENT] [--poll-interval SECONDS] [-- CODEX_ARGS...]
-  status                             Show live automatic-switch status
+  status [--auto]                     Show live or native automatic-switch status
   doctor                             Check local setup without exposing tokens
 
 Examples:
@@ -21,8 +23,11 @@ Examples:
   codex-switch run -- --no-alt-screen
   codex-switch run --auto --min-remaining 15
   codex-switch run -- resume --last
+  codex-switch auto
 
 use affects codex-switch run; plain codex keeps its original login.
+auto monitors native auth.json (5% / 30s) and replaces it; no session is launched.
+Use status --auto to inspect it; Ctrl-C stops monitoring without undoing a switch.
 --auto keeps the same terminal/conversation and switches live below the threshold.
 It checks every 30 seconds by default; use status to inspect without notifications.
 Auto conversations share a dedicated live home; manual runs keep per-account history.
@@ -71,7 +76,7 @@ export async function main(argv = process.argv.slice(2)) {
   try {
     const args = [...argv]; const command = args.shift();
     if (!command || ['help', '--help', '-h'].includes(command)) { console.log(help); return; }
-    if (command === '--version') { console.log('codex-switch 0.2.1'); return; }
+    if (command === '--version') { console.log('codex-switch 0.3.0'); return; }
     const pool = new Pool();
     const original = path.resolve(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'));
     if (command === 'list' || command === 'usage') {
@@ -137,15 +142,30 @@ export async function main(argv = process.argv.slice(2)) {
     } else if (command === 'use') {
       const name = nameCheck(args.shift()); none(args); pool.select(name);
       console.log(`Selected ${name} for codex-switch run. Existing sessions keep their account.`);
+    } else if (command === 'auto') {
+      const rawMin = take(args, '--min-remaining');
+      const rawInterval = take(args, '--poll-interval');
+      const home = path.resolve(take(args, '--codex-home') || original);
+      const once = flag(args, '--once'); none(args);
+      const minRemaining = rawMin === undefined ? 5 : Number(rawMin);
+      const interval = rawInterval === undefined ? 30 : Number(rawInterval);
+      if (!Number.isFinite(minRemaining) || minRemaining < 0 || minRemaining > 100)
+        throw new Failure('min-remaining must be between 0 and 100.');
+      if (!Number.isInteger(interval) || interval < 5 || interval > 3600)
+        throw new Failure('poll-interval must be an integer between 5 and 3600 seconds.');
+      const { runAuto } = await import('./auto.mjs');
+      await runAuto(pool, home, { minRemaining, interval, once });
     } else if (command === 'status') {
+      const auto = flag(args, '--auto');
       none(args);
-      const status = readJSON(path.join(pool.root, 'live', 'status.json'), null);
-      if (!status) { console.log('No live automatic session has been started.'); return; }
+      const status = readJSON(path.join(pool.root, auto ? 'auto' : 'live', 'status.json'), null);
+      if (!status) { console.log(`No ${auto ? 'native monitor' : 'live automatic session'} has been started.`); return; }
       let state = status.state;
       if (state !== 'stopped' && status.host === os.hostname()) {
         try { process.kill(status.pid, 0); } catch (e) { if (e.code === 'ESRCH') state = 'stale'; }
       }
-      console.log(`Live auto: ${clean(state)}; account=${clean(status.active)}; remaining=${clean(status.remainingPercent)}%; threshold=${clean(status.minRemaining)}%; checked=${clean(status.checkedAt)}`);
+      console.log(`${auto ? 'Native auto' : 'Live auto'}: ${clean(state)}; account=${clean(status.active)}; remaining=${clean(status.remainingPercent)}%; threshold=${clean(status.minRemaining)}%; checked=${clean(status.checkedAt)}`);
+      if (auto) console.log(`Home: ${clean(status.home)}; last=${clean(status.lastState || status.state)}`);
       if (status.error) console.log(clean(status.error));
     } else if (command === 'run') {
       const sep = args.indexOf('--');

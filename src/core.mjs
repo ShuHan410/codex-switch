@@ -102,12 +102,27 @@ export class Pool {
 }
 
 export function credentialIdentity(home) {
+  const { identity, email } = credentialSnapshot(home);
+  return { identity, email };
+}
+
+export function credentialSnapshot(home) {
   const file = path.join(home, 'auth.json');
-  let s;
-  try { s = fs.lstatSync(file); } catch { throw new Failure('No file-based login found. Use codex-switch login NAME.', 'needs-login'); }
-  if (!s.isFile() || s.isSymbolicLink() || s.uid !== process.getuid() || (s.mode & 0o077))
-    throw new Failure('auth.json must be an owned regular file with mode 600.');
-  const auth = readJSON(file);
+  let fd, text;
+  try {
+    fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    const s = fs.fstatSync(fd);
+    if (!s.isFile() || s.uid !== process.getuid() || (s.mode & 0o077))
+      throw new Failure('auth.json must be an owned regular file with mode 600.');
+    text = fs.readFileSync(fd, 'utf8');
+  } catch (e) {
+    if (e instanceof Failure) throw e;
+    if (e.code === 'ELOOP') throw new Failure('auth.json must be an owned regular file with mode 600.');
+    throw new Failure('Cannot read a private file-based login. Use codex-switch login NAME.', 'needs-login');
+  } finally { if (fd !== undefined) fs.closeSync(fd); }
+  let auth;
+  try { auth = JSON.parse(text); } catch { throw new Failure('Login JSON is unreadable.', 'needs-login'); }
+  if (!auth || typeof auth !== 'object') throw new Failure('Login JSON is unreadable.', 'needs-login');
   if (auth.auth_mode !== 'chatgpt' || !auth.tokens?.refresh_token || !auth.tokens?.access_token)
     throw new Failure('Only file-based ChatGPT subscription logins are supported.', 'needs-login');
   let claims;
@@ -116,6 +131,7 @@ export function credentialIdentity(home) {
   if (!claims.sub || !auth.tokens.account_id) throw new Failure('Login is missing account identity.', 'needs-login');
   // These are labels from local credentials, not proof of a valid server session.
   return {
+    auth, text,
     identity: crypto.createHash('sha256').update(`${claims.sub}\0${auth.tokens.account_id}`).digest('hex'),
     email: typeof claims.email === 'string' ? claims.email : '(no email)',
   };

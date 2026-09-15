@@ -1,6 +1,6 @@
 # codex-switch
 
-終端機 Codex 訂閱帳號管理器，v0.2.1。需要 Linux、Node.js 22+、Codex CLI。
+終端機 Codex 訂閱帳號管理器，v0.3.0。需要 Linux、Node.js 22+、Codex CLI。
 本機已用 Codex CLI 0.154.0 驗證。WebSocket 依賴固定為 `ws@8.21.3`。
 
 ## 開始使用
@@ -32,7 +32,59 @@ codex-switch run -- resume --last
 `--` 後的參數傳給原生 Codex。固定使用 OpenAI provider，
 帳號/backend 改寫、`--profile`/`-p` 與登入指令不支援透過 `run`。
 `use` 只改變後續 `codex-switch run` 的預設帳號；`--account` 和 `--auto`
-只影響這次啟動及該次自動監測。直接執行 `codex` 仍使用原本的登入。
+只影響這次啟動及該次自動監測。直接執行 `codex` 使用原生 home 的登入，
+`auto` 可以更新這份登入（如下）。
+
+## 原生 Codex：在另一個終端執行 auto
+
+終端 A 照常執行 `codex`，終端 B 執行：
+
+```sh
+codex-switch auto
+# 自訂門檻與間隔（預設值如下）
+codex-switch auto --min-remaining 5 --poll-interval 30
+```
+
+`auto` 不啟動 Codex 對話。它立即查詢一次，之後每輪完成後等待 30 秒再查：
+
+1. 讀取原生 home 的 `auth.json`，以帳號／workspace 身分比對帳號池，
+   不使用 `list` 星號判斷目前原生帳號。此帳號必須先由 `login` 或新版
+   `import` 加入為獨立管理的帳號；未收錄就不改登入檔。
+2. 使用與 `usage` 相同的 App Server RPC 查額度，當次使用的是原生登入檔。
+3. 任一已回傳視窗剩餘低於 5% 或已用盡時，查詢其他帳號，選擇最少剩餘
+   額度最高且至少有 5% 的可用帳號；切換前再次確認。剛好 5% 不切。
+4. 備份原生登入及目前帳號池憑證，將原生最新憑證存回原帳號的獨立 home，
+   再原子替換原生 `auth.json`，並更新 `use` 所管理的預設選擇。
+   不複製／覆蓋設定、歷史對話或其他帳號資料。
+
+原生 home 預設為 `CODEX_HOME`，未設定時為 `~/.codex`。可明確指定：
+
+```sh
+codex-switch auto --codex-home "$HOME/.codex"
+codex-switch status --auto
+codex-switch auto --once  # 執行一輪後退出；低額度時仍會真的切換
+```
+
+在 B 終端按 Ctrl-C 停止監控，已切換的登入會保留。正常運行不印通知；
+`status --auto` 顯示最後紀錄：`watching`、`switched`、`no-alternative`、
+`unregistered`、`unknown`、`busy`、`changed`、`stopped` 或 `stale`。
+沒有可用替代帳號、查詢失敗或偵測到登入檔在查詢期間改變，都不強制切換。
+
+同一帳號池／同一原生 home 同時只允許一個監控器。備份位於
+`~/.codex/account-pool/auto/backups/`，含完整憑證，目錄 700、檔案 600，
+以內容摘要去重，不自動刪除。原生 home 的 `.codex-switch-auto.lock`
+以及帳號池的 `auto/.lock` 適用下方強制終止後人工檢查鎖的規則。
+
+**界線：**只支援檔案式 ChatGPT 登入。若使用 keyring、API key、其他
+`CODEX_HOME` 或管理員 workspace 限制，修改這份檔案未必影響你的原生
+Codex；工具不改這些設定，也不繞過限制。請使用 file 儲存模式。
+一般 Codex 的登入／刷新不遵守本工具鎖，檢查與替換之間仍存在極短競爭
+視窗；執行手動 login/logout 時建議先停止 `auto`。多份相同 refresh token
+仍可能失效，需要重新登入。這不是新的 OAuth 授權。
+
+`auto` **只保證依規則更新登入檔，不檢查既有 session 是否採用新帳號**，
+不重啟、不恢復、不重送工作。它與下方 `run --auto` 是兩個不同模式；
+一般原生 Codex 工作流請使用這一節的 `auto`。
 
 ## 第二版：對話中的自動切換
 
@@ -157,7 +209,8 @@ Access token 到期本身不代表登入失效：刷新由 Codex 管理。
 
 ## 使用界線
 
-- 自動模式的監測隨該次終端啟動／結束；不安裝常駐系統服務。
+- `run --auto` 監測隨該次終端啟動／結束；`auto` 則在 B 終端前景運行，
+  直到 Ctrl-C。兩者都不安裝常駐系統服務。
 - 不含提醒、工作重送、自動接續、shell 攔截、刪除帳號或搬移舊對話。
 - 每帳號同時只允許一個本工具的 run/login/query，避免刷新與登入競爭。
   原生 `codex` 不受這個鎖限制。執行中查詢會回報 busy。
