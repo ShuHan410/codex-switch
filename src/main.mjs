@@ -27,6 +27,12 @@ New account homes have separate history and a snapshot of your configuration.
 CODEX_SWITCH_HOME overrides pool storage. CODEX_SWITCH_CODEX overrides the binary.
 `;
 function clean(value) { return String(value ?? '-').replace(/[\x00-\x1f\x7f-\x9f]/g, '?'); }
+function durationLabel(minutes) {
+  if (!Number.isFinite(minutes) || minutes <= 0) return 'unknown duration';
+  if (minutes % 1440 === 0) return `${minutes / 1440}d`;
+  if (minutes % 60 === 0) return `${minutes / 60}h`;
+  return `${minutes}m`;
+}
 function publicAccount(a, selected) {
   return { name: a.name, selected: a.name === selected, email: a.email, state: a.state,
     plan: a.plan, checkedAt: a.checkedAt, error: a.error,
@@ -44,7 +50,7 @@ function show(accounts, selected, json, detail = false) {
         const w = b[kind]; if (!w) continue;
         const date = Number.isFinite(w.resetsAt) ? new Date(w.resetsAt * 1000) : null;
         const reset = date && Number.isFinite(date.getTime()) ? date.toLocaleString() : '?';
-        console.log(`    ${clean(b.limitId)} ${kind}: ${clean(w.usedPercent)}% used; window=${clean(w.windowDurationMins)}m; resets=${reset}${a.state === 'busy' || a.state === 'unknown' || a.state === 'needs-login' ? ' (cached; not currently verified)' : ''}`);
+        console.log(`    ${clean(b.limitId)} ${durationLabel(w.windowDurationMins)}: ${clean(w.usedPercent)}% used; resets=${reset}${a.state === 'busy' || a.state === 'unknown' || a.state === 'needs-login' ? ' (cached; not currently verified)' : ''}`);
       }
     }
   }
