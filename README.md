@@ -40,12 +40,12 @@ codex --version
 
 ### 從 GitHub 原始碼安裝
 
-將 `YOUR_GITHUB_USERNAME` 換成專案擁有者的 GitHub 名稱。
+專案原始碼：[ShuHan410/codex-switch](https://github.com/ShuHan410/codex-switch)。
 以下以 Bash、全新安裝且目標路徑尚不存在為例，不需要 sudo：
 
 ```sh
 mkdir -p "$HOME/.local/share" "$HOME/.local/bin"
-git clone https://github.com/YOUR_GITHUB_USERNAME/codex-switch.git "$HOME/.local/share/codex-switch"
+git clone https://github.com/ShuHan410/codex-switch.git "$HOME/.local/share/codex-switch"
 cd "$HOME/.local/share/codex-switch"
 npm ci --ignore-scripts
 ln -s "$PWD/bin/codex-switch.mjs" "$HOME/.local/bin/codex-switch"
@@ -431,19 +431,17 @@ node --check src/live.mjs
 請參考 [GitHub 授權說明](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/licensing-a-repository)。
 本節不代表已套用任何授權條款。
 
-維護者首次發布時，先在 GitHub 建立空的 `codex-switch` repository，
-不要預先建立 README、LICENSE 或 `.gitignore`，再從本機程式目錄執行：
+專案已發布於 [GitHub](https://github.com/ShuHan410/codex-switch)。
+維護者提交後續更新時，先確認 `origin` 指向本專案，並確認要發布的變更
+已完成 commit，再從本機程式目錄執行：
 
 ```sh
 git status
 git remote -v
-# 僅在尚未設定 origin 時執行；替換成你的實際 repository URL
-git remote add origin https://github.com/YOUR_GITHUB_USERNAME/codex-switch.git
-git push -u origin main
+git push origin main
 ```
 
 先完成 GitHub 的 Git 認證；不要將存取 token 放進 URL 或 README。
 發布前檢查 `git ls-files` 與歷史紀錄，確認沒有私人憑證、帳號資料或
 不想公開的內容。Git 提交中的作者姓名與 email 也會公開。
-將上方安裝 URL 的佔位名稱換成實際擁有者，再提交文件變更。
 詳細流程見 [GitHub：上傳既有本機程式](https://docs.github.com/en/migrations/importing-source-code/using-the-command-line-to-import-source-code/adding-locally-hosted-code-to-github)。
