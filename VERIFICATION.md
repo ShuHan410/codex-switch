@@ -1,3 +1,16 @@
+# Terminal presentation refresh — 2026-09-16
+
+Presentation-only: grouped help, aligned account/plan/state rows, separate
+identity/check/reset details, explicit native-versus-run-default labels, empty
+pool guidance, and multiline monitor status. Plain text without ANSI or new
+dependencies. Command routing, JSON schema, exit codes, and silent auto behavior
+are unchanged. README includes an illustrative output preview.
+
+`npm test`: exit 0, 47 passed, 0 failed; includes text sanitization, clean JSON,
+empty-pool guidance and existing native-switch/auto regression checks.
+`git diff --check`: exit 0. Independent source/help review found no blockers.
+No real login, quota call, account-pool mutation or live session test performed.
+
 # Remaining quota and pool editing (0.4.0) — 2026-09-16
 
 Text usage displays `100 - usedPercent` as `% left`; JSON raw API fields

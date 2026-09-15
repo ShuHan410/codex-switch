@@ -127,6 +127,32 @@ ChatGPT 帳號；也可使用 `codex-switch login work --device-auth` 的裝置�
 
 不帶名稱的 `usage` 與 `usage --all` 都會查詢整個帳號池。
 
+### 輸出怎麼讀
+
+終端輸出使用純文字與對齊欄位，不依賴顏色、動畫或特殊字型。
+帳號名稱、方案與狀態在同一列，email／查詢時間在下方；`usage`
+再列出各時段的剩餘額度與重設時間。例如（示意資料）：
+
+```text
+Native login: personal@example.test (personal)
+Run default: work
+
+  ACCOUNT   PLAN  STATUS
+  --------  ----  ----------------
+* personal  plus  ready
+    personal@example.test
+    Checked: 2026-09-16T08:00:00.000Z
+    5h           80% left  codex
+      Resets: 2026/9/16 下午6:00:00
+    7d           45% left  codex
+      Resets: 2026/9/20 上午8:00:00
+```
+
+`Native login`／`*` 表示原生登入檔的身分，`Run default` 則是未指定
+`--account` 時的工具預設選擇，兩者可能不同。時間格式依系統語系顯示。
+快取額度會註記尚未確認；無額度資料顯示 `Quota: not available`。
+供程式讀取時使用 `--json`，其資料格式不受文字排版影響。
+
 另一種實驗性模式 `run --auto`：啟動專用 Codex 會話並監測、切換。
 若你使用一般 `codex`，請使用下方「原生 Codex」章節的 `auto`：
 

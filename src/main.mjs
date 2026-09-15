@@ -5,35 +5,47 @@ import { Pool, Failure, nameCheck, credentialIdentity, privateDir, prepareHome, 
 
 const help = `codex-switch 0.4.0 — ChatGPT subscription accounts for Codex CLI
 
-  login NAME [--device-auth]          Official login, then register account
-  import NAME [--source-home PATH]    Copy an existing login into a managed home
-  list [--json] [--codex-home PATH]   Accounts, cached quota, and native login marker
-  usage [NAME | --all] [--json] [--codex-home PATH]  Check quota and native login
-  use NAME [--codex-home PATH]        Replace native login and select account
+ACCOUNTS
+  login NAME [--device-auth]         Official login, then register account
+  import NAME [--source-home PATH]   Copy an existing login into a managed home
   rename OLD_NAME NEW_NAME           Rename a registered account
-  remove NAME                        Remove from pool; keep recoverable local data
-  auto [--min-remaining PERCENT] [--poll-interval SECONDS] [--codex-home PATH] [--once]
-                                     Monitor native login and replace auth.json
-  run [--account NAME | --auto] [--min-remaining PERCENT] [--poll-interval SECONDS] [-- CODEX_ARGS...]
-  status [--auto]                     Show live or native automatic-switch status
-  doctor                             Check local setup without exposing tokens
+  remove NAME                       Remove from pool; retain local data
 
-Examples:
-  codex-switch login second --device-auth
+CHECK & SWITCH
+  list                              Accounts and actual native login marker
+  usage [NAME | --all]               Remaining quota (5h / 7d, % left)
+  use NAME                          Replace native login and select account
+    list / usage: --json             Machine-readable output
+    list / usage / use: --codex-home PATH
+
+NATIVE MONITOR — for your regular codex terminal
+  auto                              Monitor and switch native auth.json
+    --min-remaining PERCENT          Default: 5; switch below this threshold
+    --poll-interval SECONDS          Default: 30
+    --codex-home PATH                Override native home
+    --once                          One check; may switch the account
+  status --auto                     Inspect the native monitor
+
+SESSIONS
+  run [--account NAME] [-- CODEX_ARGS...]
+                                    Launch with a separate account home
+  run --auto [--min-remaining PERCENT] [--poll-interval SECONDS]
+      [-- CODEX_ARGS...]             Experimental live switching (10% / 30s)
+  status                            Inspect the experimental live session
+  doctor                            Check local setup without exposing tokens
+
+QUICK START
+  codex-switch import personal
   codex-switch usage --all
-  codex-switch use second
-  codex-switch run -- --no-alt-screen
-  codex-switch run --auto --min-remaining 15
-  codex-switch run -- resume --last
-  codex-switch auto
+  codex-switch use personal
+  codex
 
-use replaces native auth.json and also selects the account for codex-switch run.
-auto monitors native auth.json (5% / 30s) and replaces it; no session is launched.
-Use status --auto to inspect it; Ctrl-C stops monitoring without undoing a switch.
---auto keeps the same terminal/conversation and switches live below the threshold.
-It checks every 30 seconds by default; use status to inspect without notifications.
-Auto conversations share a dedicated live home; manual runs keep per-account history.
-CODEX_SWITCH_HOME overrides pool storage. CODEX_SWITCH_CODEX overrides the binary.
+NOTES
+  use / auto update the login file; existing sessions are not checked.
+  auto stays quiet. Ctrl-C stops it without undoing a switch.
+  run --auto shares a dedicated live home; manual runs keep per-account history.
+  CODEX_HOME overrides native home (default: ~/.codex).
+  CODEX_SWITCH_HOME overrides pool storage; CODEX_SWITCH_CODEX the executable.
 `;
 function clean(value) { return String(value ?? '-').replace(/[\x00-\x1f\x7f-\x9f]/g, '?'); }
 function durationLabel(minutes) {
@@ -63,20 +75,36 @@ function publicAccount(a, selected, native) {
 function show(accounts, selected, json, detail = false, native = { state: 'unknown' }) {
   if (json) { console.log(JSON.stringify(accounts.map(a => publicAccount(a, selected, native)), null, 2)); return; }
   console.log(`Native login: ${clean(native.email)} (${clean(native.name || native.state)})`);
-  if (!accounts.length) { console.log('No accounts. Run: codex-switch login NAME'); return; }
+  console.log(`Run default: ${clean(selected)}\n`);
+  if (!accounts.length) {
+    console.log('No accounts in your pool yet.\n\n  Save current login   codex-switch import NAME\n  Sign in another      codex-switch login NAME');
+    return;
+  }
+  const nameWidth = Math.max(7, ...accounts.map(a => clean(a.name).length));
+  const planWidth = Math.max(4, ...accounts.map(a => clean(a.plan).length));
+  console.log(`  ${'ACCOUNT'.padEnd(nameWidth)}  ${'PLAN'.padEnd(planWidth)}  STATUS`);
+  console.log(`  ${'-'.repeat(nameWidth)}  ${'-'.repeat(planWidth)}  ----------------`);
   for (const a of accounts) {
-    console.log(`${a.name === native.name ? '*' : ' '} ${a.name}  ${clean(a.email)}  ${clean(a.plan)}  ${a.state}  checked=${clean(a.checkedAt)}`);
-    if (a.error) console.log(`    ${clean(a.error)}`);
+    console.log(`${a.name === native.name ? '*' : ' '} ${clean(a.name).padEnd(nameWidth)}  ${clean(a.plan).padEnd(planWidth)}  ${clean(a.state)}`);
+    console.log(`    ${clean(a.email)}\n    Checked: ${clean(a.checkedAt)}`);
+    if (a.error) console.log(`    Note: ${clean(a.error)}`);
+    let windows = 0;
     if (detail) for (const b of buckets(a.limits)) {
       for (const kind of ['primary', 'secondary']) {
         const w = b[kind]; if (!w) continue;
+        windows++;
         const date = Number.isFinite(w.resetsAt) ? new Date(w.resetsAt * 1000) : null;
         const reset = date && Number.isFinite(date.getTime()) ? date.toLocaleString() : '?';
         const left = Number.isFinite(w.usedPercent) && w.usedPercent >= 0 && w.usedPercent <= 100 ? Number((100 - w.usedPercent).toFixed(6)) : '?';
-        console.log(`    ${clean(b.limitId)} ${durationLabel(w.windowDurationMins)}: ${left}% left; resets=${reset}${a.state === 'busy' || a.state === 'unknown' || a.state === 'needs-login' ? ' (cached; not currently verified)' : ''}`);
+        console.log(`    ${durationLabel(w.windowDurationMins).padEnd(8)} ${`${left}% left`.padStart(12)}  ${clean(b.limitId)}`);
+        console.log(`      Resets: ${reset}${a.state !== 'ready' && a.state !== 'limited' ? ' (cached; not currently verified)' : ''}`);
       }
     }
+    if (detail && !windows) console.log('    Quota: not available');
+    console.log('');
   }
+  console.log('Marker: * = native login file match; run default is separate.');
+  if (!detail) console.log('Check remaining quota: codex-switch usage --all');
 }
 function take(args, flag) {
   const i = args.indexOf(flag);
@@ -193,9 +221,10 @@ export async function main(argv = process.argv.slice(2)) {
       if (state !== 'stopped' && status.host === os.hostname()) {
         try { process.kill(status.pid, 0); } catch (e) { if (e.code === 'ESRCH') state = 'stale'; }
       }
-      console.log(`${auto ? 'Native auto' : 'Live auto'}: ${clean(state)}; account=${clean(status.active)}; remaining=${clean(status.remainingPercent)}%; threshold=${clean(status.minRemaining)}%; checked=${clean(status.checkedAt)}`);
-      if (auto) console.log(`Home: ${clean(status.home)}; last=${clean(status.lastState || status.state)}`);
-      if (status.error) console.log(clean(status.error));
+      console.log(`${auto ? 'Native auto' : 'Live auto'}: ${clean(state)}; account=${clean(status.active)}\n`);
+      console.log(`  Remaining  ${clean(status.remainingPercent)}% left\n  Threshold  ${clean(status.minRemaining)}%\n  Checked    ${clean(status.checkedAt)}`);
+      if (auto) console.log(`  Home       ${clean(status.home)}\n  Last event ${clean(status.lastState || status.state)}`);
+      if (status.error) console.log(`  Note       ${clean(status.error)}`);
     } else if (command === 'run') {
       const sep = args.indexOf('--');
       const forwarded = sep < 0 ? [] : args.splice(sep).slice(1);
