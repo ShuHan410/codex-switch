@@ -1,3 +1,53 @@
+# V2 verification — 2026-09-15
+
+Environment: Linux, Node v25.8.2, codex-cli 0.154.0, ws 8.21.3.
+
+Acceptance: switch the active conversation automatically below the configured
+remaining-quota threshold, without reminders, restarting, or replaying work;
+preserve each account's canonical credentials and existing manual commands.
+
+- `npm test`: exit 0; 21 passed, 0 failed. Includes the 13 V1 regressions and
+  eight live-controller tests: same-email workspace refusal, threshold boundaries, unknown quota, unavailable
+  alternatives, leases, refresh identity, ambiguous login, outside login changes,
+  overlapping polls, and candidate rechecks. All credentials are synthetic.
+  An earlier run exceeded the JSON-noise fixture's 100 ms process-start budget
+  and leaked its child on assertion failure; this fixture now has a 1 s budget
+  and unconditional cleanup. The separate timeout-rejection test is unchanged.
+- `node scripts/verify-live-protocol.mjs`: exit 0. A real installed Codex App
+  Server sends two model requests in the same thread to a localhost SSE fixture.
+  Lowering alpha's simulated headroom to 5% triggers beta automatically; captured
+  request identities are exactly `["alpha","beta"]`. Canonical credentials are
+  byte-identical afterward; runtime auth.json does not exist. Scratch evidence:
+  `/tmp/cs-protocol-CK5FTj` (synthetic only).
+- `node scripts/verify-live-protocol.mjs --ui-smoke`: exit 0. Native terminal
+  connects to that private Unix service, renders the requested temporary working
+  directory, and exits through Ctrl-C. No additional model request was sent.
+  Scratch: `/tmp/cs-protocol-REpfUj`. Temporary-home PATH helper warning and one
+  MCP startup warning were visible; MCP integration is not part of this test.
+- `codex-switch --version`: exit 0, `codex-switch 0.2.0`.
+- Real quota probes at 2026-09-15 13:14 UTC marked all three registered accounts
+  limited. `codex-switch run --auto --min-remaining 1 -- --version` correctly
+  refused with exit 1; its service shut down and `status` reported stopped.
+  No real model prompt was sent and no browser login was performed.
+
+Limits: the successful account-switch proof uses real Codex but synthetic quota
+and localhost model responses, not two production ChatGPT model generations.
+Production in-flight streaming/retries, account policy differences, revocation,
+and long-lived token refresh still need owner acceptance when quota is available.
+An already-running ordinary Codex process cannot be adopted by this controller.
+No claim of uninterrupted completion is made: quota observations lag and an
+already-sent request can still fail. External-token auth is experimental.
+
+Independent review found no reproduced blocker; the same-email workspace
+confirmation gap was guarded by excluding ambiguous entries. Remaining review
+risks: a hypothetical server refresh callback awaited during login could queue
+behind activation and time out (not observed); normal UI exit while a quota probe
+is pending can wait for probe timeouts before releasing leases. Production
+seamless-switch acceptance is explicitly deferred by the owner due to quota.
+
+The V1 record below is historical; its account names and startup-only `--auto`
+semantics do not describe the current account pool or V2 behavior.
+
 # V1 verification — 2026-09-15
 
 Environment: Linux, Node v25.8.2, codex-cli 0.154.0.

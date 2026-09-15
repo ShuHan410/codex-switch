@@ -157,9 +157,9 @@ test('RPC ignores JSON null and arrays before a valid initialization response', 
   resetEnv(); const root = temp(); const home = path.join(root, 'home'); auth(home, 'rpc-noise');
   process.env.CODEX_SWITCH_CODEX = fakeCodex;
   process.env.CODEX_SWITCH_TEST_RPC_MODE = 'null-and-array';
-  const rpc = new Rpc(home, 100);
-  await rpc.initialize();
-  await rpc.close(); resetEnv();
+  const rpc = new Rpc(home, 1000);
+  try { await rpc.initialize(); }
+  finally { await rpc.close(); resetEnv(); }
 });
 
 test('staged same-account re-login replaces synthetic auth and preserves its identity', { concurrency: false }, async () => {

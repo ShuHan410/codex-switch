@@ -1,16 +1,17 @@
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
-import { Pool, Failure, nameCheck, credentialIdentity, privateDir, prepareHome, native, authArgs, probe, buckets, headroom, choose } from './core.mjs';
+import { Pool, Failure, nameCheck, credentialIdentity, privateDir, prepareHome, native, authArgs, probe, buckets, headroom, readJSON } from './core.mjs';
 
-const help = `codex-switch 0.1.0 — ChatGPT subscription accounts for Codex CLI
+const help = `codex-switch 0.2.0 — ChatGPT subscription accounts for Codex CLI
 
   login NAME [--device-auth]          Official login, then register account
   import NAME [--source-home PATH]    Register an existing file login in place
   list [--json]                      Accounts and cached status
   usage [NAME | --all] [--json]       Check quota windows (default: all)
   use NAME                           Select account for subsequent runs
-  run [--account NAME | --auto] [--min-remaining PERCENT] [-- CODEX_ARGS...]
+  run [--account NAME | --auto] [--min-remaining PERCENT] [--poll-interval SECONDS] [-- CODEX_ARGS...]
+  status                             Show live automatic-switch status
   doctor                             Check local setup without exposing tokens
 
 Examples:
@@ -22,8 +23,9 @@ Examples:
   codex-switch run -- resume --last
 
 use affects codex-switch run; plain codex keeps its original login.
-Automatic selection happens BEFORE launch, never during an active turn.
-New account homes have separate history and a snapshot of your configuration.
+--auto keeps the same terminal/conversation and switches live below the threshold.
+It checks every 30 seconds by default; use status to inspect without notifications.
+Auto conversations share a dedicated live home; manual runs keep per-account history.
 CODEX_SWITCH_HOME overrides pool storage. CODEX_SWITCH_CODEX overrides the binary.
 `;
 function clean(value) { return String(value ?? '-').replace(/[\x00-\x1f\x7f-\x9f]/g, '?'); }
@@ -69,7 +71,7 @@ export async function main(argv = process.argv.slice(2)) {
   try {
     const args = [...argv]; const command = args.shift();
     if (!command || ['help', '--help', '-h'].includes(command)) { console.log(help); return; }
-    if (command === '--version') { console.log('codex-switch 0.1.0'); return; }
+    if (command === '--version') { console.log('codex-switch 0.2.0'); return; }
     const pool = new Pool();
     const original = path.resolve(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'));
     if (command === 'list' || command === 'usage') {
@@ -121,39 +123,44 @@ export async function main(argv = process.argv.slice(2)) {
     } else if (command === 'use') {
       const name = nameCheck(args.shift()); none(args); pool.select(name);
       console.log(`Selected ${name} for codex-switch run. Existing sessions keep their account.`);
+    } else if (command === 'status') {
+      none(args);
+      const status = readJSON(path.join(pool.root, 'live', 'status.json'), null);
+      if (!status) { console.log('No live automatic session has been started.'); return; }
+      let state = status.state;
+      if (state !== 'stopped' && status.host === os.hostname()) {
+        try { process.kill(status.pid, 0); } catch (e) { if (e.code === 'ESRCH') state = 'stale'; }
+      }
+      console.log(`Live auto: ${clean(state)}; account=${clean(status.active)}; remaining=${clean(status.remainingPercent)}%; threshold=${clean(status.minRemaining)}%; checked=${clean(status.checkedAt)}`);
+      if (status.error) console.log(clean(status.error));
     } else if (command === 'run') {
       const sep = args.indexOf('--');
       const forwarded = sep < 0 ? [] : args.splice(sep).slice(1);
       const auto = flag(args, '--auto'); const specified = take(args, '--account');
       const rawMin = take(args, '--min-remaining');
+      const rawInterval = take(args, '--poll-interval');
+      const interval = rawInterval === undefined ? 30 : Number(rawInterval);
       const min = rawMin === undefined ? 10 : Number(rawMin); none(args);
       if (!Number.isFinite(min) || min < 0 || min > 100) throw new Failure('min-remaining must be between 0 and 100.');
-      if (auto && specified || !auto && rawMin !== undefined) throw new Failure('Use --auto with --min-remaining, without --account.');
+      if (!Number.isInteger(interval) || interval < 5 || interval > 3600) throw new Failure('poll-interval must be an integer between 5 and 3600 seconds.');
+      if (auto && specified || !auto && (rawMin !== undefined || rawInterval !== undefined)) throw new Failure('Use --auto with polling/threshold options, without --account.');
       // These options would invalidate account binding or target a different backend.
       if (forwarded.some(x => /^(--remote(?:=|$)|--oss$|--local-provider(?:=|$)|--profile(?:=|$)|-p)/.test(x)) ||
           forwarded.some(x => /^(?:[^=]+\.)?(cli_auth_credentials_store|forced_login_method|forced_chatgpt_workspace_id|model_providers?(?:\.[^=]+)?|chatgpt_base_url)\s*=/.test(x.replace(/^(--config=|-c=?)/, '').replaceAll('"', '').replaceAll("'", '').trim())) ||
           forwarded.some(x => ['login', 'logout', 'app-server', 'exec-server', 'remote-control'].includes(x)))
         throw new Failure('Account/backend overrides and auth commands are not supported through run.');
-      let a;
       if (auto) {
-        const accounts = [];
-        for (const name of pool.names()) accounts.push(await probe(pool, name));
-        a = choose(accounts, min);
-        if (!a) throw new Failure('No freshly verified account meets the remaining-quota threshold. Run usage --all.');
-      } else {
-        const name = specified || pool.selected();
-        if (!name) throw new Failure('No selected account. Run login or import first.');
-        a = pool.get(name);
+        const { runLive } = await import('./live.mjs');
+        process.exitCode = await runLive(pool, forwarded, { minRemaining: min, interval });
+        return;
       }
+      const name = specified || pool.selected();
+      if (!name) throw new Failure('No selected account. Run login or import first.');
+      const a = pool.get(name);
       const release = pool.accountLock(a.name);
       try {
-        if (auto) {
-          // A different process could have used the account after the pool scan.
-          a = await probe(pool, a.name, { locked: true });
-          if (!choose([a], min)) throw new Failure('Selected account no longer meets the quota threshold. Run --auto again.');
-        }
         if (credentialIdentity(a.home).identity !== a.identity) throw new Failure('Stored login identity changed; refusing to launch another account.');
-        console.error(`codex-switch: ${a.name}${auto ? ` (${headroom(a.limits)}% minimum remaining)` : ''}`);
+        console.error(`codex-switch: ${a.name}`);
         process.exitCode = await native(a.home, [...authArgs, ...forwarded]);
       } finally { release(); }
     } else if (command === 'doctor') {
