@@ -1,3 +1,24 @@
+# Native permissions and active marker (0.3.2) — 2026-09-15
+
+Observed native home: owned by current uid, mode 775. The old 0022 guard rejected
+this valid user-owned installation. `use`/`auto` now open the directory with
+O_DIRECTORY/O_NOFOLLOW, validate ownership, and clear only group/other write
+bits via fchmod before credential operations (775 becomes 755). Symlinks and
+foreign ownership are still rejected; list/usage do not change native permissions.
+
+`list` and `usage` detect the native file identity after quota probes. The star
+means a matching registered identity, not `pool.selected()`. Unregistered,
+missing and unreadable credentials produce no star and explicit native state.
+JSON keeps `selected` as the run default and adds `active` and `nativeState`.
+Both commands accept `--codex-home`; neither updates the stored selection.
+
+Tests cover use on mode775, symlink refusal without mutation, list/usage following
+manual native changes, unregistered/logout/invalid credentials, explicit home,
+JSON selection versus active identity, and no permission mutation during display.
+`npm test`: exit 0, 41 passed, 0 failed. `git diff --check`: exit 0.
+Independent source review found no blockers. Real read-only `codex-switch list`
+showed the native login matching `second`; no real login was changed in testing.
+
 # Native use fix (0.3.1) — 2026-09-15
 
 Bug: `use NAME` only called `pool.select`, leaving native auth.json unchanged.

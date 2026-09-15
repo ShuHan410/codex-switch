@@ -5,9 +5,14 @@ import crypto from 'node:crypto';
 import { Failure, credentialSnapshot, atomicJSON, privateDir, lock, probe, choose, headroom } from './core.mjs';
 
 function nativeHome(home) {
-  const s = fs.lstatSync(home);
-  if (!s.isDirectory() || s.isSymbolicLink() || s.uid !== process.getuid() || (s.mode & 0o022))
-    throw new Failure('Native Codex home must be an owned directory, not writable by others.');
+  const fd = fs.openSync(home, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
+  try {
+    const s = fs.fstatSync(fd);
+    if (!s.isDirectory() || s.uid !== process.getuid())
+      throw new Failure('Native Codex home must be a directory owned by the current user.');
+    // Secure an owned home before writing secrets; preserve read/search permissions.
+    if (s.mode & 0o022) fs.fchmodSync(fd, (s.mode & 0o7777) & ~0o022);
+  } finally { fs.closeSync(fd); }
   return fs.realpathSync(home);
 }
 function optionalSnapshot(home) {
@@ -147,7 +152,7 @@ export class NativeAuto {
 }
 
 export async function runAuto(pool, home, { minRemaining = 5, interval = 30, once = false } = {}) {
-  // Do not create/change native home permissions: it belongs to ordinary Codex.
+  // Secure the owned native home before writing credentials or lock files.
   home = nativeHome(home);
   const dir = path.join(pool.root, 'auto'); privateDir(dir);
   const release = lock(path.join(dir, '.lock'));

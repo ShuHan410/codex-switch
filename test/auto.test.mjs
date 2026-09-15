@@ -192,8 +192,10 @@ function cliEnv(f) {
 
 test('use changes native auth and selection, preserves history, and saves outgoing credentials', t => {
   const f = fixture(t);
+  fs.chmodSync(f.native, 0o775);
   const result = spawnSync(process.execPath, [cli, 'use', 'beta'], { env: cliEnv(f), encoding: 'utf8', timeout: 5000 });
   assert.equal(result.status, 0, result.stderr);
+  assert.equal(fs.statSync(f.native).mode & 0o777, 0o755);
   assert.match(result.stdout, /Native login set to beta/);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.native, 'auth.json'))), JSON.parse(f.canonical.beta));
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.homes.alpha, 'auth.json'))), JSON.parse(f.nativeBefore));
@@ -202,6 +204,48 @@ test('use changes native auth and selection, preserves history, and saves outgoi
   assert.equal(fs.statSync(path.join(f.native, 'auth.json')).mode & 0o777, 0o600);
   assert.ok(files(path.join(f.pool.root, 'auto/backups')).some(file => JSON.stringify(JSON.parse(fs.readFileSync(file))) === f.nativeBefore));
   assert.equal(fs.existsSync(path.join(f.native, '.codex-switch-auto.lock')), false);
+});
+
+test('list and usage identify native login independently of selection and follow external changes', t => {
+  const f = fixture(t); f.pool.select('beta');
+  fs.chmodSync(f.native, 0o775);
+  for (const args of [['list'], ['usage', '--all']]) {
+    const invoke = extra => spawnSync(process.execPath, [cli, ...args, ...extra], { env: cliEnv(f), encoding: 'utf8', timeout: 10000 });
+    writeAuth(f.native, f.nativeBefore);
+    let result = invoke([]); assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /^\* alpha /m); assert.doesNotMatch(result.stdout, /^\* beta /m);
+    const initialRows = JSON.parse(invoke(['--json']).stdout);
+    assert.deepEqual(initialRows.filter(a => a.active).map(a => a.name), ['alpha']);
+    assert.deepEqual(initialRows.filter(a => a.selected).map(a => a.name), ['beta']);
+    assert.ok(initialRows.every(a => a.nativeState === 'registered'));
+    writeAuth(f.native, authBytes('outsider'));
+    result = invoke([]); assert.match(result.stdout, /outsider@example.test \(unregistered\)/);
+    assert.doesNotMatch(result.stdout, /^\* /m);
+    const outsiderRows = JSON.parse(invoke(['--json']).stdout);
+    assert.ok(outsiderRows.every(a => !a.active && a.nativeState === 'unregistered'));
+    writeAuth(f.native, f.canonical.beta);
+    result = invoke(['--json']);
+    const rows = JSON.parse(result.stdout);
+    assert.deepEqual(rows.filter(a => a.active).map(a => a.name), ['beta']);
+    assert.equal(f.pool.selected(), 'beta');
+    fs.unlinkSync(path.join(f.native, 'auth.json'));
+    result = invoke([]); assert.match(result.stdout, /signed-out/); assert.doesNotMatch(result.stdout, /^\* /m);
+    writeAuth(f.native, '{invalid');
+    result = invoke([]); assert.match(result.stdout, /unknown/); assert.doesNotMatch(result.stdout, /^\* /m);
+    result = invoke(['--codex-home', f.homes.beta]);
+    assert.match(result.stdout, /^\* beta /m);
+    assert.equal(fs.statSync(f.native).mode & 0o777, 0o775);
+  }
+});
+
+test('use still rejects a symlinked native home without changing its permissions or credentials', t => {
+  const f = fixture(t); const linked = path.join(f.root, 'linked');
+  fs.chmodSync(f.native, 0o775); fs.symlinkSync(f.native, linked);
+  const result = spawnSync(process.execPath, [cli, 'use', 'beta', '--codex-home', linked], { env: cliEnv(f), encoding: 'utf8', timeout: 5000 });
+  assert.equal(result.status, 1);
+  assert.equal(fs.statSync(f.native).mode & 0o777, 0o775);
+  assert.equal(fs.readFileSync(path.join(f.native, 'auth.json'), 'utf8'), f.nativeBefore);
+  assert.equal(f.pool.selected(), 'alpha');
 });
 
 test('use on the active account does not restore its older pool credentials', t => {

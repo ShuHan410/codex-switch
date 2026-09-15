@@ -3,12 +3,12 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { Pool, Failure, nameCheck, credentialIdentity, privateDir, prepareHome, native, authArgs, probe, buckets, headroom, readJSON } from './core.mjs';
 
-const help = `codex-switch 0.3.1 — ChatGPT subscription accounts for Codex CLI
+const help = `codex-switch 0.3.2 — ChatGPT subscription accounts for Codex CLI
 
   login NAME [--device-auth]          Official login, then register account
   import NAME [--source-home PATH]    Copy an existing login into a managed home
-  list [--json]                      Accounts and cached status
-  usage [NAME | --all] [--json]       Check quota windows (default: all)
+  list [--json] [--codex-home PATH]   Accounts, cached quota, and native login marker
+  usage [NAME | --all] [--json] [--codex-home PATH]  Check quota and native login
   use NAME [--codex-home PATH]        Replace native login and select account
   auto [--min-remaining PERCENT] [--poll-interval SECONDS] [--codex-home PATH] [--once]
                                      Monitor native login and replace auth.json
@@ -40,17 +40,30 @@ function durationLabel(minutes) {
   if (minutes % 60 === 0) return `${minutes / 60}h`;
   return `${minutes}m`;
 }
-function publicAccount(a, selected) {
-  return { name: a.name, selected: a.name === selected, email: a.email, state: a.state,
+function nativeLogin(pool, home) {
+  try {
+    const id = credentialIdentity(home);
+    const match = pool.names().map(n => pool.get(n)).find(a => a.identity === id.identity);
+    return { state: match ? 'registered' : 'unregistered', name: match?.name, email: id.email };
+  } catch {
+    let missing = false;
+    try { fs.lstatSync(path.join(home, 'auth.json')); } catch (e) { missing = e.code === 'ENOENT'; }
+    return { state: missing ? 'signed-out' : 'unknown' };
+  }
+}
+function publicAccount(a, selected, native) {
+  return { name: a.name, selected: a.name === selected, active: a.name === native.name,
+    nativeState: native.state, email: a.email, state: a.state,
     plan: a.plan, checkedAt: a.checkedAt, error: a.error,
     remainingPercent: a.state === 'ready' || a.state === 'limited' ? headroom(a.limits) : null,
     limits: a.limits };
 }
-function show(accounts, selected, json, detail = false) {
-  if (json) { console.log(JSON.stringify(accounts.map(a => publicAccount(a, selected)), null, 2)); return; }
+function show(accounts, selected, json, detail = false, native = { state: 'unknown' }) {
+  if (json) { console.log(JSON.stringify(accounts.map(a => publicAccount(a, selected, native)), null, 2)); return; }
+  console.log(`Native login: ${clean(native.email)} (${clean(native.name || native.state)})`);
   if (!accounts.length) { console.log('No accounts. Run: codex-switch login NAME'); return; }
   for (const a of accounts) {
-    console.log(`${a.name === selected ? '*' : ' '} ${a.name}  ${clean(a.email)}  ${clean(a.plan)}  ${a.state}  checked=${clean(a.checkedAt)}`);
+    console.log(`${a.name === native.name ? '*' : ' '} ${a.name}  ${clean(a.email)}  ${clean(a.plan)}  ${a.state}  checked=${clean(a.checkedAt)}`);
     if (a.error) console.log(`    ${clean(a.error)}`);
     if (detail) for (const b of buckets(a.limits)) {
       for (const kind of ['primary', 'secondary']) {
@@ -76,10 +89,11 @@ export async function main(argv = process.argv.slice(2)) {
   try {
     const args = [...argv]; const command = args.shift();
     if (!command || ['help', '--help', '-h'].includes(command)) { console.log(help); return; }
-    if (command === '--version') { console.log('codex-switch 0.3.1'); return; }
+    if (command === '--version') { console.log('codex-switch 0.3.2'); return; }
     const pool = new Pool();
     const original = path.resolve(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'));
     if (command === 'list' || command === 'usage') {
+      const home = path.resolve(take(args, '--codex-home') || original);
       const json = flag(args, '--json');
       const all = flag(args, '--all');
       const name = args.shift(); none(args);
@@ -87,7 +101,7 @@ export async function main(argv = process.argv.slice(2)) {
       const names = name ? [nameCheck(name)] : pool.names();
       const accounts = [];
       for (const n of names) accounts.push(command === 'usage' ? await probe(pool, n) : pool.get(n));
-      show(accounts, pool.selected(), json, command === 'usage');
+      show(accounts, pool.selected(), json, command === 'usage', nativeLogin(pool, home));
       if (command === 'usage' && accounts.some(a => !['ready', 'limited'].includes(a.state))) process.exitCode = 2;
     } else if (command === 'import') {
       const source = path.resolve(take(args, '--source-home') || original);

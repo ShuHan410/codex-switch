@@ -1,6 +1,6 @@
 # codex-switch
 
-終端機 Codex 訂閱帳號管理器，v0.3.1。需要 Linux、Node.js 22+、Codex CLI。
+終端機 Codex 訂閱帳號管理器，v0.3.2。需要 Linux、Node.js 22+、Codex CLI。
 本機已用 Codex CLI 0.154.0 驗證。WebSocket 依賴固定為 `ws@8.21.3`。
 
 ## 開始使用
@@ -55,6 +55,10 @@ codex-switch use roman --codex-home "$HOME/.codex"
 若 `auto` 正在執行，請先在 B 終端 Ctrl-C 停止，再執行 `use`，需要時
 重新啟動 `auto`。兩者使用同一把原生 home 鎖；忙碌時拒絕覆寫。
 `use` 不啟動或檢查既有 session，也不以 `/status` 顯示判斷是否成功。
+`use`／`auto` 寫入前會確認原生 home 是本人擁有的真實目錄。若有群組或
+其他人的寫入權限，會先移除這些寫入位元（例如 775 → 755），保留其餘
+權限；不再只因 775 就拒絕操作。非本人目錄或符號連結仍會拒絕。
+此權限收緊只在切換／啟動監控時進行，`list`／`usage` 不調整原生 home 權限。
 
 ## 原生 Codex：在另一個終端執行 auto
 
@@ -69,7 +73,7 @@ codex-switch auto --min-remaining 5 --poll-interval 30
 `auto` 不啟動 Codex 對話。它立即查詢一次，之後每輪完成後等待 30 秒再查：
 
 1. 讀取原生 home 的 `auth.json`，以帳號／workspace 身分比對帳號池，
-   不使用 `list` 星號判斷目前原生帳號。此帳號必須先由 `login` 或新版
+   不使用工具儲存的預設選擇判斷目前原生帳號。此帳號必須先由 `login` 或新版
    `import` 加入為獨立管理的帳號；未收錄就不改登入檔。
 2. 使用與 `usage` 相同的 App Server RPC 查額度，當次使用的是原生登入檔。
 3. 任一已回傳視窗剩餘低於 5% 或已用盡時，查詢其他帳號，選擇最少剩餘
@@ -219,7 +223,15 @@ codex-switch list --json
 | `identity-changed` | 原始登入位置已變成不同帳號／workspace |
 
 `list` 是快取快照，請看 `checked` 時間；最新資料使用 `usage`。
-星號表示工具的預設選擇，不是對原生登入檔或執行中 session 的即時確認。
+`list`／`usage` 每次顯示前會重新讀取原生登入檔，星號表示登入檔的帳號／
+workspace 身分與該池內項目相符，不再根據工具儲存的預設選擇標記。
+手動使用原生 `codex logout`／`login` 後，下次查詢就會反映新身分。
+登入帳號不在池中時，標頭顯示 email 與 `unregistered`，所有項目都不標星；
+缺少登入檔顯示 `signed-out`，檔案不安全、無法解析或讀取時顯示 `unknown`，
+同樣不沿用舊星號。這僅確認本機檔案，不確認既有 session 或伺服器授權。
+兩個指令皆支援 `--codex-home PATH`（預設 `CODEX_HOME`，未設定時為
+`~/.codex`）。JSON 仍是陣列：`active` 是本次登入檔比對結果，
+`nativeState` 是偵測狀態；`selected` 保留為工具預設選擇，不代表登入身分。
 Access token 到期本身不代表登入失效：刷新由 Codex 管理。
 查詢失敗時保留上次額度供參考，但不會採用它自動啟動。
 
