@@ -190,6 +190,45 @@ function cliEnv(f) {
     CODEX_SWITCH_CODEX: fakeCodex, CODEX_SWITCH_TEST_REMAINING_BY_SUB: JSON.stringify({ alpha: 4, beta: 80 }) };
 }
 
+test('use changes native auth and selection, preserves history, and saves outgoing credentials', t => {
+  const f = fixture(t);
+  const result = spawnSync(process.execPath, [cli, 'use', 'beta'], { env: cliEnv(f), encoding: 'utf8', timeout: 5000 });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Native login set to beta/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.native, 'auth.json'))), JSON.parse(f.canonical.beta));
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.homes.alpha, 'auth.json'))), JSON.parse(f.nativeBefore));
+  assert.equal(f.pool.selected(), 'beta');
+  for (const [file, before] of f.untouched) assert.deepEqual(fs.readFileSync(path.join(f.native, file)), before);
+  assert.equal(fs.statSync(path.join(f.native, 'auth.json')).mode & 0o777, 0o600);
+  assert.ok(files(path.join(f.pool.root, 'auto/backups')).some(file => JSON.stringify(JSON.parse(fs.readFileSync(file))) === f.nativeBefore));
+  assert.equal(fs.existsSync(path.join(f.native, '.codex-switch-auto.lock')), false);
+});
+
+test('use on the active account does not restore its older pool credentials', t => {
+  const f = fixture(t); f.pool.select('beta');
+  const result = spawnSync(process.execPath, [cli, 'use', 'alpha'], { env: cliEnv(f), encoding: 'utf8', timeout: 5000 });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(fs.readFileSync(path.join(f.native, 'auth.json'), 'utf8'), f.nativeBefore);
+  assert.equal(f.pool.selected(), 'alpha');
+});
+
+test('use supports an unregistered or absent native login and refuses a monitor lock', t => {
+  const f = fixture(t); const outsider = authBytes('outsider'); writeAuth(f.native, outsider);
+  const args = [cli, 'use', 'beta', '--codex-home', f.native];
+  let result = spawnSync(process.execPath, args, { env: cliEnv(f), encoding: 'utf8', timeout: 5000 });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(files(path.join(f.pool.root, 'auto/backups')).some(file => JSON.stringify(JSON.parse(fs.readFileSync(file))) === outsider));
+  fs.unlinkSync(path.join(f.native, 'auth.json'));
+  result = spawnSync(process.execPath, args, { env: cliEnv(f), encoding: 'utf8', timeout: 5000 });
+  assert.equal(result.status, 0, result.stderr);
+  const before = fs.readFileSync(path.join(f.native, 'auth.json'));
+  fs.mkdirSync(path.join(f.native, '.codex-switch-auto.lock'));
+  result = spawnSync(process.execPath, [cli, 'use', 'alpha'], { env: cliEnv(f), encoding: 'utf8', timeout: 5000 });
+  assert.equal(result.status, 3);
+  assert.deepEqual(fs.readFileSync(path.join(f.native, 'auth.json')), before);
+  assert.equal(f.pool.selected(), 'beta');
+});
+
 test('auto --once wires native quota probes to file replacement and status without session launch', t => {
   const f = fixture(t);
   const result = spawnSync(process.execPath, [cli, 'auto', '--once'], { env: cliEnv(f), encoding: 'utf8', timeout: 10000 });

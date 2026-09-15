@@ -1,6 +1,6 @@
 # codex-switch
 
-終端機 Codex 訂閱帳號管理器，v0.3.0。需要 Linux、Node.js 22+、Codex CLI。
+終端機 Codex 訂閱帳號管理器，v0.3.1。需要 Linux、Node.js 22+、Codex CLI。
 本機已用 Codex CLI 0.154.0 驗證。WebSocket 依賴固定為 `ws@8.21.3`。
 
 ## 開始使用
@@ -31,9 +31,29 @@ codex-switch run -- resume --last
 
 `--` 後的參數傳給原生 Codex。固定使用 OpenAI provider，
 帳號/backend 改寫、`--profile`/`-p` 與登入指令不支援透過 `run`。
-`use` 只改變後續 `codex-switch run` 的預設帳號；`--account` 和 `--auto`
+`use NAME` 直接切換原生 `auth.json`，同時設定後續 `codex-switch run`
+的預設帳號；`run` 的 `--account` 和 `--auto`
 只影響這次啟動及該次自動監測。直接執行 `codex` 使用原生 home 的登入，
 `auto` 可以更新這份登入（如下）。
+
+手動切換原生登入：
+
+```sh
+codex-switch use roman
+codex  # 讀取剛切換好的原生登入
+# 明確指定原生 home（預設 CODEX_HOME，未設定時 ~/.codex）
+codex-switch use roman --codex-home "$HOME/.codex"
+```
+
+`use` 與 `auto` 共用憑證備份／保存／原子替換流程，不改設定或歷史紀錄。
+選擇已啟用的同一身分時保留原生最新 token，不用帳號池的舊快照覆蓋。
+手動 `use` 不查詢額度，也不保證儲存的授權仍有效；可先用 `usage NAME`
+確認。原生尚未登入時也能套用帳號池登入；未收錄的原生帳號會先備份，
+但不會自動加入帳號池。目標必須是獨立管理的帳號。
+
+若 `auto` 正在執行，請先在 B 終端 Ctrl-C 停止，再執行 `use`，需要時
+重新啟動 `auto`。兩者使用同一把原生 home 鎖；忙碌時拒絕覆寫。
+`use` 不啟動或檢查既有 session，也不以 `/status` 顯示判斷是否成功。
 
 ## 原生 Codex：在另一個終端執行 auto
 

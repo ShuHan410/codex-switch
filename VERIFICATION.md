@@ -1,3 +1,20 @@
+# Native use fix (0.3.1) — 2026-09-15
+
+Bug: `use NAME` only called `pool.select`, leaving native auth.json unchanged.
+It now uses the same `switchNative` credential commit routine as `auto`, with
+native-home and affected-account locks. Manual selection has no quota gate.
+Existing native credentials are backed up; registered outgoing credentials are
+saved back to their managed home; native auth and default selection are updated.
+Selecting the already active identity preserves the native token unchanged.
+
+`npm test`: exit 0, 39 passed, 0 failed. Three added CLI regressions check real
+synthetic native-file changes (not merely the selection pointer), preserved
+settings/history and backups, same-identity token preservation, missing or
+unregistered native login, explicit home override, and refusal while locked.
+All existing auto/import/live tests remain passing after sharing the switch path.
+No real account was switched during development; no existing session behavior
+is claimed. File-login/refresh-race limitations below still apply.
+
 # Native login monitor (0.3.0) — 2026-09-15
 
 Acceptance: B-terminal `codex-switch auto` immediately checks the native

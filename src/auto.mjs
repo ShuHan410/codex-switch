@@ -4,6 +4,70 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { Failure, credentialSnapshot, atomicJSON, privateDir, lock, probe, choose, headroom } from './core.mjs';
 
+function nativeHome(home) {
+  const s = fs.lstatSync(home);
+  if (!s.isDirectory() || s.isSymbolicLink() || s.uid !== process.getuid() || (s.mode & 0o022))
+    throw new Failure('Native Codex home must be an owned directory, not writable by others.');
+  return fs.realpathSync(home);
+}
+function optionalSnapshot(home) {
+  try { fs.lstatSync(path.join(home, 'auth.json')); }
+  catch (e) { if (e.code === 'ENOENT') return null; throw e; }
+  return credentialSnapshot(home);
+}
+function backupCredential(pool, snapshot) {
+  const dir = path.join(pool.root, 'auto', 'backups'); privateDir(dir);
+  const hash = crypto.createHash('sha256').update(snapshot.text).digest('hex');
+  const file = path.join(dir, `${hash}.json`);
+  if (!fs.existsSync(file)) atomicJSON(file, snapshot.auth);
+}
+
+// Caller holds the native-home lock and all affected account locks.
+export function switchNative(pool, home, current, outgoing, candidate, backup = s => backupCredential(pool, s)) {
+  if (!candidate.managed || fs.realpathSync(candidate.home) === home)
+    throw new Failure('Choose an independently managed account created by login or import.');
+  const incoming = credentialSnapshot(candidate.home);
+  if (incoming.identity !== candidate.identity) throw new Failure('Target account credentials changed identity.');
+  const release = lock(path.join(pool.root, '.settings-lock'));
+  try {
+    if (optionalSnapshot(home)?.text !== outgoing?.text) return false;
+    // Selecting the already active identity must not restore an older pool token.
+    if (outgoing?.identity === incoming.identity) {
+      atomicJSON(path.join(pool.root, 'settings.json'), { selected: candidate.name });
+      return true;
+    }
+    let saved;
+    if (current?.managed && fs.realpathSync(current.home) !== home) {
+      saved = credentialSnapshot(current.home);
+      if (saved.identity !== current.identity) throw new Failure('Managed account identity changed.');
+      backup(saved);
+    }
+    if (outgoing) backup(outgoing);
+    // Detect changes during backup work before modifying either credential file.
+    if (optionalSnapshot(home)?.text !== outgoing?.text) return false;
+    if (saved) atomicJSON(path.join(current.home, 'auth.json'), outgoing.auth);
+    atomicJSON(path.join(home, 'auth.json'), incoming.auth);
+    atomicJSON(path.join(pool.root, 'settings.json'), { selected: candidate.name });
+    return true;
+  } finally { release(); }
+}
+
+export function useNative(pool, home, name) {
+  home = nativeHome(home);
+  const release = lock(path.join(home, '.codex-switch-auto.lock'));
+  const accounts = [];
+  try {
+    const candidate = pool.get(name);
+    const outgoing = optionalSnapshot(home);
+    const current = outgoing && pool.names().map(n => pool.get(n)).find(a => a.identity === outgoing.identity);
+    for (const n of [...new Set([name, ...(current ? [current.name] : [])])].sort())
+      accounts.push(pool.accountLock(n));
+    if (!switchNative(pool, home, current, outgoing, candidate))
+      throw new Failure('Native login changed during switching; retry after login completes.');
+    return home;
+  } finally { for (const unlock of accounts.reverse()) unlock(); release(); }
+}
+
 // This controller changes file-based login only. It never attaches to a session.
 export class NativeAuto {
   constructor(pool, home, { minRemaining = 5, probeAccount = probe, record = () => {} } = {}) {
@@ -16,10 +80,7 @@ export class NativeAuto {
     return this.pending;
   }
   backup(snapshot) {
-    const dir = path.join(this.pool.root, 'auto', 'backups'); privateDir(dir);
-    const hash = crypto.createHash('sha256').update(snapshot.text).digest('hex');
-    const file = path.join(dir, `${hash}.json`);
-    if (!fs.existsSync(file)) atomicJSON(file, snapshot.auth);
+    backupCredential(this.pool, snapshot);
   }
   async check() {
     let release;
@@ -55,7 +116,7 @@ export class NativeAuto {
         const candidate = choose(candidates, this.min);
         if (!candidate) break;
         candidates.splice(candidates.indexOf(candidate), 1);
-        let candidateRelease, settingsRelease;
+        let candidateRelease;
         try {
           candidateRelease = this.pool.accountLock(candidate.name);
           const verified = await this.probeAccount(this.pool, candidate.name, { locked: true });
@@ -66,25 +127,16 @@ export class NativeAuto {
           if (credentialSnapshot(this.home).text !== outgoing.text) {
             this.record({ state: 'changed', active: null, error: 'Native login changed during polling; retrying next poll.' }); return;
           }
-          const saved = credentialSnapshot(current.home);
-          if (saved.identity !== current.identity) throw new Failure('Managed account identity changed.');
-          settingsRelease = lock(path.join(this.pool.root, '.settings-lock'));
-          // Keep recoverable copies before updating either credential location.
-          this.backup(saved); this.backup(outgoing);
-          // Native login/logout ignores our lock; recheck after backup work too.
-          if (credentialSnapshot(this.home).text !== outgoing.text) {
+          if (!switchNative(this.pool, this.home, current, outgoing, verified, s => this.backup(s))) {
             this.record({ state: 'changed', active: null }); return;
           }
-          atomicJSON(path.join(current.home, 'auth.json'), outgoing.auth);
-          atomicJSON(path.join(this.home, 'auth.json'), incoming.auth);
-          atomicJSON(path.join(this.pool.root, 'settings.json'), { selected: candidate.name });
           this.record({ state: 'switched', active: candidate.name, previous: current.name,
             remainingPercent: headroom(verified.limits), switchedAt: new Date().toISOString() });
           return;
         } catch (e) {
           if (e instanceof Failure && e.state === 'busy') continue;
           throw e;
-        } finally { settingsRelease?.(); candidateRelease?.(); }
+        } finally { candidateRelease?.(); }
       }
       if (!this.closed) this.record({ state: 'no-alternative', active: current.name, remainingPercent: remaining });
     } catch (e) {
@@ -96,10 +148,7 @@ export class NativeAuto {
 
 export async function runAuto(pool, home, { minRemaining = 5, interval = 30, once = false } = {}) {
   // Do not create/change native home permissions: it belongs to ordinary Codex.
-  const s = fs.lstatSync(home);
-  if (!s.isDirectory() || s.isSymbolicLink() || s.uid !== process.getuid() || (s.mode & 0o022))
-    throw new Failure('Native Codex home must be an owned directory, not writable by others.');
-  home = fs.realpathSync(home);
+  home = nativeHome(home);
   const dir = path.join(pool.root, 'auto'); privateDir(dir);
   const release = lock(path.join(dir, '.lock'));
   let homeRelease, timer, wake, controller;

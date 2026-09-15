@@ -3,13 +3,13 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { Pool, Failure, nameCheck, credentialIdentity, privateDir, prepareHome, native, authArgs, probe, buckets, headroom, readJSON } from './core.mjs';
 
-const help = `codex-switch 0.3.0 — ChatGPT subscription accounts for Codex CLI
+const help = `codex-switch 0.3.1 — ChatGPT subscription accounts for Codex CLI
 
   login NAME [--device-auth]          Official login, then register account
   import NAME [--source-home PATH]    Copy an existing login into a managed home
   list [--json]                      Accounts and cached status
   usage [NAME | --all] [--json]       Check quota windows (default: all)
-  use NAME                           Select account for subsequent runs
+  use NAME [--codex-home PATH]        Replace native login and select account
   auto [--min-remaining PERCENT] [--poll-interval SECONDS] [--codex-home PATH] [--once]
                                      Monitor native login and replace auth.json
   run [--account NAME | --auto] [--min-remaining PERCENT] [--poll-interval SECONDS] [-- CODEX_ARGS...]
@@ -25,7 +25,7 @@ Examples:
   codex-switch run -- resume --last
   codex-switch auto
 
-use affects codex-switch run; plain codex keeps its original login.
+use replaces native auth.json and also selects the account for codex-switch run.
 auto monitors native auth.json (5% / 30s) and replaces it; no session is launched.
 Use status --auto to inspect it; Ctrl-C stops monitoring without undoing a switch.
 --auto keeps the same terminal/conversation and switches live below the threshold.
@@ -76,7 +76,7 @@ export async function main(argv = process.argv.slice(2)) {
   try {
     const args = [...argv]; const command = args.shift();
     if (!command || ['help', '--help', '-h'].includes(command)) { console.log(help); return; }
-    if (command === '--version') { console.log('codex-switch 0.3.0'); return; }
+    if (command === '--version') { console.log('codex-switch 0.3.1'); return; }
     const pool = new Pool();
     const original = path.resolve(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'));
     if (command === 'list' || command === 'usage') {
@@ -140,8 +140,11 @@ export async function main(argv = process.argv.slice(2)) {
         }
       } finally { if (stage) fs.rmSync(stage, { recursive: true, force: true }); release(); }
     } else if (command === 'use') {
-      const name = nameCheck(args.shift()); none(args); pool.select(name);
-      console.log(`Selected ${name} for codex-switch run. Existing sessions keep their account.`);
+      const home = path.resolve(take(args, '--codex-home') || original);
+      const name = nameCheck(args.shift()); none(args);
+      const { useNative } = await import('./auto.mjs');
+      const target = useNative(pool, home, name);
+      console.log(`Native login set to ${name}: ${target}/auth.json. Default selection updated; running sessions are not checked.`);
     } else if (command === 'auto') {
       const rawMin = take(args, '--min-remaining');
       const rawInterval = take(args, '--poll-interval');
