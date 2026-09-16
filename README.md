@@ -429,10 +429,15 @@ codex-switch remove adam
 
 ## 開發與驗證
 
+修改程式前先讀 [AGENTS.md](AGENTS.md)：模組分工、維護規則與安全界線。
+本 README 是使用者操作手冊；逐次測試證據與未驗證項目保存在
+[VERIFICATION.md](VERIFICATION.md)，其中舊版本紀錄不代表現行功能。
+
 ```sh
 # 先切換到你的 clone 目錄
 npm ci --ignore-scripts
 npm test
+# 修改實驗性即時協定時，再執行：
 node scripts/verify-live-protocol.mjs
 # 可選：開啟假帳號的原生終端，不輸入 prompt，按 Ctrl-C 結束
 node scripts/verify-live-protocol.mjs --ui-smoke

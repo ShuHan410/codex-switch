@@ -1,3 +1,15 @@
+# Verification history
+
+This file records dated/versioned evidence, newest first. Commands, test counts,
+account labels and temporary paths describe those runs, not current machine
+state; temporary artifacts may no longer exist. Older acceptance checklists are
+historical, not instructions to resume operations on real accounts.
+
+For current installation, behavior and limitations, read [README.md](README.md).
+For change scope, safety and verification rules, read [AGENTS.md](AGENTS.md).
+Do not treat synthetic/local protocol checks as production seamless-switch proof.
+Documentation-only edits need not create another runtime-verification entry.
+
 # Terminal presentation refresh — 2026-09-16
 
 Presentation-only: grouped help, aligned account/plan/state rows, separate
