@@ -232,6 +232,27 @@ test('usage prints remaining percentages instead of used', t => {
   assert.doesNotMatch(result.stdout, /\x1b\[/);
 });
 
+test('usage --all queries at most two accounts concurrently and preserves account order', t => {
+  const f = fixture(t); const rpcLog = path.join(f.root, 'rpc.log');
+  for (const name of ['gamma', 'delta']) {
+    const home = path.join(f.root, `managed-${name}`); writeAuth(home, authBytes(name));
+    f.pool.add(name, home, true);
+  }
+  const env = { ...cliEnv(f), CODEX_SWITCH_TEST_RPC_DELAY: '40', CODEX_SWITCH_TEST_RPC_LOG: rpcLog,
+    CODEX_SWITCH_TEST_REMAINING_BY_SUB: JSON.stringify({ alpha: 4, beta: 80, gamma: 60, delta: 40 }) };
+  const result = spawnSync(process.execPath, [cli, 'usage', '--all', '--json'], { env, encoding: 'utf8', timeout: 10000 });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout).map(a => a.name), ['alpha', 'beta', 'delta', 'gamma']);
+  const events = fs.readFileSync(rpcLog, 'utf8').trim().split('\n').map(JSON.parse);
+  let active = 0; let peak = 0;
+  for (const event of events) {
+    active += event.phase === 'start' ? 1 : -1;
+    assert.ok(active >= 0); peak = Math.max(peak, active);
+  }
+  assert.equal(active, 0); assert.equal(peak, 2);
+  assert.equal(new Set(events.map(event => event.home)).size, 4);
+});
+
 test('display distinguishes native and run default, escapes controls, and keeps JSON clean', t => {
   const f = fixture(t); f.pool.select('beta');
   f.pool.save({ ...f.pool.get('beta'), email: 'beta\x1b[31m@example.test', error: 'line\nbreak', checkedAt: '2026-09-16T06:19:40.471Z' });

@@ -2,7 +2,9 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { localTime, paint, quotaTone, accountBadge } from './display.mjs';
-import { Pool, Failure, nameCheck, credentialIdentity, privateDir, prepareHome, native, authArgs, probe, buckets, headroom, readJSON } from './core.mjs';
+import { Pool, Failure, nameCheck, credentialIdentity, privateDir, prepareHome, native, authArgs, probe, buckets, headroom, mapConcurrent, readJSON } from './core.mjs';
+
+const USAGE_CONCURRENCY = 2;
 
 const help = `codex-switch 0.4.0 — ChatGPT subscription accounts for Codex CLI
 
@@ -132,8 +134,9 @@ export async function main(argv = process.argv.slice(2)) {
       const name = args.shift(); none(args);
       if (name && all || command === 'list' && name) throw new Failure('Choose one account or --all.');
       const names = name ? [nameCheck(name)] : pool.names();
-      const accounts = [];
-      for (const n of names) accounts.push(command === 'usage' ? await probe(pool, n) : pool.get(n));
+      const accounts = command === 'usage'
+        ? await mapConcurrent(names, USAGE_CONCURRENCY, n => probe(pool, n))
+        : names.map(n => pool.get(n));
       show(accounts, pool.selected(), json, command === 'usage', nativeLogin(pool, home));
       if (command === 'usage' && accounts.some(a => !['ready', 'limited'].includes(a.state))) process.exitCode = 2;
     } else if (command === 'import') {

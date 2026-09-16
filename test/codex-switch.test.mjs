@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
-  Failure, Pool, Rpc, choose, credentialIdentity, headroom, lock, nameCheck,
+  Failure, Pool, Rpc, choose, credentialIdentity, headroom, lock, mapConcurrent, nameCheck,
 } from '../src/core.mjs';
 import { main } from '../src/main.mjs';
 
@@ -46,6 +46,37 @@ function capturedMain(argv) {
 function account(name, remaining, state = 'ready', checkedAt = new Date().toISOString()) {
   return { name, state, checkedAt, limits: { rateLimits: { primary: { usedPercent: 100 - remaining, resetsAt: future } } } };
 }
+
+test('bounded mapping runs two tasks at a time and preserves input order', async () => {
+  const started = []; const releases = new Map(); let active = 0; let peak = 0;
+  const pending = mapConcurrent(['alpha', 'beta', 'gamma', 'delta'], 2, async name => {
+    started.push(name); active++; peak = Math.max(peak, active);
+    await new Promise(resolve => releases.set(name, resolve));
+    active--; return name.toUpperCase();
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(started, ['alpha', 'beta']); assert.equal(peak, 2);
+  releases.get('beta')(); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(started, ['alpha', 'beta', 'gamma']);
+  releases.get('alpha')(); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(started, ['alpha', 'beta', 'gamma', 'delta']);
+  releases.get('gamma')(); releases.get('delta')();
+  assert.deepEqual(await pending, ['ALPHA', 'BETA', 'GAMMA', 'DELTA']);
+  assert.equal(peak, 2);
+});
+
+test('bounded mapping drains active tasks before reporting an error', async () => {
+  const expected = new Error('query failed'); let release; let settled = false;
+  const blocker = new Promise(resolve => { release = resolve; });
+  const pending = mapConcurrent(['slow', 'failed'], 2, async name => {
+    if (name === 'slow') await blocker;
+    else throw expected;
+  });
+  pending.finally(() => { settled = true; }).catch(() => {});
+  await new Promise(resolve => setImmediate(resolve)); assert.equal(settled, false);
+  release(); await assert.rejects(pending, error => error === expected);
+  assert.equal(settled, true);
+});
 test.after(() => {
   resetEnv();
   for (const root of tempRoots) fs.rmSync(root, { recursive: true, force: true });

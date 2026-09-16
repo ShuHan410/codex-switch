@@ -355,6 +355,8 @@ codex-switch list --json
 
 `usage` 透過本機 `codex app-server` 的官方 JSON-RPC 介面查詢；
 沒有啟動模型 turn，也不透過解析 TUI 畫面或未公開 HTTP endpoint。
+查詢全部帳號時固定同時處理最多兩個帳號，以縮短等待時間並限制資源使用；
+每次仍向服務查詢最新狀態，不沿用額度快取，也不提供調整並行數的參數。
 文字輸出顯示剩餘百分比，例如 `5h: 80% left`（原本為 `20% used`）；
 `usage` 的快取額度也使用 `left`。未知或無效數字顯示 `?% left`。
 百分比不是可精確換算的剩餘 token 數。`--json` 保留原始 API

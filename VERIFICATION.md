@@ -10,6 +10,18 @@ For change scope, safety and verification rules, read [AGENTS.md](AGENTS.md).
 Do not treat synthetic/local protocol checks as production seamless-switch proof.
 Documentation-only edits need not create another runtime-verification entry.
 
+# Bounded parallel usage queries — 2026-09-16
+
+`usage --all` now probes at most two independent account homes concurrently,
+without a CLI concurrency option or cache reuse. Results retain sorted pool
+order and single-account usage follows the same path with one worker.
+
+The regression fixture delays every RPC response and records child-service
+start/end events: four accounts reach peak concurrency 2, all four services
+finish, and JSON order remains `alpha`, `beta`, `delta`, `gamma`. No real
+credentials, quota API, native login or account pool was used.
+`npm test`: exit 0, 53 passed, 0 failed. `git diff --check`: exit 0.
+
 # Local time and health colors — 2026-09-16
 
 Checked/reset text uses host-local time (or TZ), seconds and explicit UTC offset.

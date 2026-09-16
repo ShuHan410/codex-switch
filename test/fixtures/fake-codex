@@ -22,6 +22,14 @@ if (args[0] !== 'app-server') {
 }
 
 const mode = process.env.CODEX_SWITCH_TEST_RPC_MODE || 'ok';
+const rpcDelay = Number(process.env.CODEX_SWITCH_TEST_RPC_DELAY || 0);
+const rpcLog = process.env.CODEX_SWITCH_TEST_RPC_LOG;
+const rpcWrite = value => { if (rpcLog) fs.appendFileSync(rpcLog, `${JSON.stringify(value)}\n`); };
+const reply = (method, value) => {
+  const event = { method, home: process.env.CODEX_HOME, pid: process.pid };
+  rpcWrite({ ...event, phase: 'start' });
+  setTimeout(() => { process.stdout.write(`${JSON.stringify(value)}\n`); rpcWrite({ ...event, phase: 'end' }); }, rpcDelay);
+};
 readline.createInterface({ input: process.stdin }).on('line', line => {
   const msg = JSON.parse(line);
   if (msg.method === 'initialize') {
@@ -31,11 +39,11 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
       return;
     }
     if (mode === 'null-and-array') process.stdout.write('null\n[]\n');
-    process.stdout.write(`${JSON.stringify({ id: msg.id, result: { protocolVersion: '1' } })}\n`);
+    reply(msg.method, { id: msg.id, result: { protocolVersion: '1' } });
     return;
   }
   if (msg.method === 'account/read') {
-    process.stdout.write(`${JSON.stringify({ id: msg.id, result: { account: { type: 'chatgpt', planType: 'test' } } })}\n`);
+    reply(msg.method, { id: msg.id, result: { account: { type: 'chatgpt', planType: 'test' } } });
     return;
   }
   if (msg.method === 'account/rateLimits/read') {
@@ -45,6 +53,6 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
       const { sub } = JSON.parse(Buffer.from(auth.tokens.id_token.split('.')[1], 'base64url').toString());
       usedPercent = 100 - JSON.parse(process.env.CODEX_SWITCH_TEST_REMAINING_BY_SUB)[sub];
     }
-    process.stdout.write(`${JSON.stringify({ id: msg.id, result: { rateLimits: { primary: { usedPercent, resetsAt: Date.now() / 1000 + 3600 } } } })}\n`);
+    reply(msg.method, { id: msg.id, result: { rateLimits: { primary: { usedPercent, resetsAt: Date.now() / 1000 + 3600 } } } });
   }
 });

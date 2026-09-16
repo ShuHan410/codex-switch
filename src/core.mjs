@@ -289,6 +289,24 @@ export function choose(accounts, minRemaining = 10) {
     .filter(x => x.remaining !== null && x.remaining > 0 && x.remaining >= minRemaining)
     .sort((x, y) => y.remaining - x.remaining || x.a.name.localeCompare(y.a.name))[0]?.a;
 }
+
+export async function mapConcurrent(values, limit, mapper) {
+  if (!Number.isInteger(limit) || limit < 1) throw new TypeError('Concurrency limit must be a positive integer.');
+  const results = new Array(values.length);
+  const errors = new Array(values.length);
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < values.length) {
+      const index = cursor++;
+      try { results[index] = await mapper(values[index], index); }
+      catch (error) { errors[index] = error; }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, values.length) }, worker));
+  for (const error of errors) if (error !== undefined) throw error;
+  return results;
+}
+
 export async function probe(pool, name, { locked = false } = {}) {
   let release;
   let initial = pool.get(name);
