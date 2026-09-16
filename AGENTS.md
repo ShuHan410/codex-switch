@@ -19,6 +19,7 @@
 | --- | --- |
 | `bin/codex-switch.mjs` | CLI 入口 |
 | `src/main.mjs` | 參數解析、指令流程、文字／JSON 輸出 |
+| `src/display.mjs` | 本地時間格式、終端色彩與健康標記（不改資料） |
 | `src/core.mjs` | 帳號池、身分比對、權限／鎖、Codex RPC 與額度判斷 |
 | `src/auto.mjs` | 原生登入手動切換與獨立監控，共用憑證替換流程 |
 | `src/live.mjs` | 實驗性 `run --auto` 會話與即時切換 |

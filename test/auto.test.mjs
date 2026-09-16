@@ -219,19 +219,22 @@ function cliEnv(f) {
 
 test('usage prints remaining percentages instead of used', t => {
   const f = fixture(t);
-  const result = spawnSync(process.execPath, [cli, 'usage', '--all'], { env: cliEnv(f), encoding: 'utf8', timeout: 10000 });
+  const result = spawnSync(process.execPath, [cli, 'usage', '--all'], { env: { ...cliEnv(f), TZ: 'Asia/Taipei' }, encoding: 'utf8', timeout: 10000 });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /4% left/); assert.match(result.stdout, /80% left/);
   assert.doesNotMatch(result.stdout, /% used/);
   assert.match(result.stdout, /ACCOUNT\s+PLAN\s+STATUS/);
   assert.match(result.stdout, /\n    Checked: /);
   assert.match(result.stdout, /\n      Resets: /);
+  assert.match(result.stdout, /Checked: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \+08:00/);
+  assert.match(result.stdout, /Resets: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \+08:00/);
+  assert.match(result.stdout, /\[LOW <5%\]/); assert.match(result.stdout, /\[OK\]/);
   assert.doesNotMatch(result.stdout, /\x1b\[/);
 });
 
 test('display distinguishes native and run default, escapes controls, and keeps JSON clean', t => {
   const f = fixture(t); f.pool.select('beta');
-  f.pool.save({ ...f.pool.get('beta'), email: 'beta\x1b[31m@example.test', error: 'line\nbreak' });
+  f.pool.save({ ...f.pool.get('beta'), email: 'beta\x1b[31m@example.test', error: 'line\nbreak', checkedAt: '2026-09-16T06:19:40.471Z' });
   const run = args => spawnSync(process.execPath, [cli, ...args], { env: cliEnv(f), encoding: 'utf8', timeout: 5000 });
   const text = run(['list']); assert.equal(text.status, 0, text.stderr);
   assert.match(text.stdout, /Run default: beta/);
@@ -243,6 +246,7 @@ test('display distinguishes native and run default, escapes controls, and keeps 
   assert.equal(rows[0].active, true); assert.equal(rows[1].selected, true);
   assert.equal(rows[1].email, 'beta\x1b[31m@example.test');
   assert.equal(rows[1].error, 'line\nbreak');
+  assert.equal(rows[1].checkedAt, '2026-09-16T06:19:40.471Z');
   f.pool.remove('alpha'); f.pool.remove('beta');
   const empty = run(['list']); assert.equal(empty.status, 0, empty.stderr);
   assert.match(empty.stdout, /codex-switch import NAME/);

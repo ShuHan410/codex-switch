@@ -1,6 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
+import { localTime, paint, quotaTone, accountBadge } from './display.mjs';
 import { Pool, Failure, nameCheck, credentialIdentity, privateDir, prepareHome, native, authArgs, probe, buckets, headroom, readJSON } from './core.mjs';
 
 const help = `codex-switch 0.4.0 — ChatGPT subscription accounts for Codex CLI
@@ -85,19 +86,20 @@ function show(accounts, selected, json, detail = false, native = { state: 'unkno
   console.log(`  ${'ACCOUNT'.padEnd(nameWidth)}  ${'PLAN'.padEnd(planWidth)}  STATUS`);
   console.log(`  ${'-'.repeat(nameWidth)}  ${'-'.repeat(planWidth)}  ----------------`);
   for (const a of accounts) {
-    console.log(`${a.name === native.name ? '*' : ' '} ${clean(a.name).padEnd(nameWidth)}  ${clean(a.plan).padEnd(planWidth)}  ${clean(a.state)}`);
-    console.log(`    ${clean(a.email)}\n    Checked: ${clean(a.checkedAt)}`);
+    const badge = accountBadge(a, headroom(a.limits));
+    const marker = a.name === native.name ? paint('*', 'active') : ' ';
+    console.log(`${marker} ${clean(a.name).padEnd(nameWidth)}  ${clean(a.plan).padEnd(planWidth)}  ${paint(`${clean(a.state)} [${badge.label}]`, badge.tone)}`);
+    console.log(`    ${clean(a.email)}\n    Checked: ${localTime(a.checkedAt)}`);
     if (a.error) console.log(`    Note: ${clean(a.error)}`);
     let windows = 0;
     if (detail) for (const b of buckets(a.limits)) {
       for (const kind of ['primary', 'secondary']) {
         const w = b[kind]; if (!w) continue;
         windows++;
-        const date = Number.isFinite(w.resetsAt) ? new Date(w.resetsAt * 1000) : null;
-        const reset = date && Number.isFinite(date.getTime()) ? date.toLocaleString() : '?';
+        const reset = localTime(Number.isFinite(w.resetsAt) ? w.resetsAt * 1000 : undefined);
         const left = Number.isFinite(w.usedPercent) && w.usedPercent >= 0 && w.usedPercent <= 100 ? Number((100 - w.usedPercent).toFixed(6)) : '?';
-        console.log(`    ${durationLabel(w.windowDurationMins).padEnd(8)} ${`${left}% left`.padStart(12)}  ${clean(b.limitId)}`);
-        console.log(`      Resets: ${reset}${a.state !== 'ready' && a.state !== 'limited' ? ' (cached; not currently verified)' : ''}`);
+        console.log(`    ${durationLabel(w.windowDurationMins).padEnd(8)} ${paint(`${left}% left`.padStart(12), badge.verified ? quotaTone(left) : 'muted')}  ${clean(b.limitId)}`);
+        console.log(`      Resets: ${reset}${!badge.verified ? ' (cached; not currently verified)' : ''}`);
       }
     }
     if (detail && !windows) console.log('    Quota: not available');
@@ -222,7 +224,7 @@ export async function main(argv = process.argv.slice(2)) {
         try { process.kill(status.pid, 0); } catch (e) { if (e.code === 'ESRCH') state = 'stale'; }
       }
       console.log(`${auto ? 'Native auto' : 'Live auto'}: ${clean(state)}; account=${clean(status.active)}\n`);
-      console.log(`  Remaining  ${clean(status.remainingPercent)}% left\n  Threshold  ${clean(status.minRemaining)}%\n  Checked    ${clean(status.checkedAt)}`);
+      console.log(`  Remaining  ${clean(status.remainingPercent)}% left\n  Threshold  ${clean(status.minRemaining)}%\n  Checked    ${localTime(status.checkedAt)}`);
       if (auto) console.log(`  Home       ${clean(status.home)}\n  Last event ${clean(status.lastState || status.state)}`);
       if (status.error) console.log(`  Note       ${clean(status.error)}`);
     } else if (command === 'run') {

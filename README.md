@@ -129,7 +129,7 @@ ChatGPT 帳號；也可使用 `codex-switch login work --device-auth` 的裝置�
 
 ### 輸出怎麼讀
 
-終端輸出使用純文字與對齊欄位，不依賴顏色、動畫或特殊字型。
+終端輸出使用對齊欄位與少量顏色，搭配文字標記，不依賴動畫或特殊字型。
 帳號名稱、方案與狀態在同一列，email／查詢時間在下方；`usage`
 再列出各時段的剩餘額度與重設時間。例如（示意資料）：
 
@@ -139,19 +139,29 @@ Run default: work
 
   ACCOUNT   PLAN  STATUS
   --------  ----  ----------------
-* personal  plus  ready
+* personal  plus  ready [OK]
     personal@example.test
-    Checked: 2026-09-16T08:00:00.000Z
+    Checked: 2026-09-16 16:00:00 +08:00
     5h           80% left  codex
-      Resets: 2026/9/16 下午6:00:00
+      Resets: 2026-09-16 18:00:00 +08:00
     7d           45% left  codex
-      Resets: 2026/9/20 上午8:00:00
+      Resets: 2026-09-20 08:00:00 +08:00
 ```
 
 `Native login`／`*` 表示原生登入檔的身分，`Run default` 則是未指定
-`--account` 時的工具預設選擇，兩者可能不同。時間格式依系統語系顯示。
+`--account` 時的工具預設選擇，兩者可能不同。`Checked`（含 `status`）與
+`Resets` 使用執行主機的本地時區，移除毫秒並附 UTC 時差，不偵測地理位置。
+可用 `TZ=Asia/Taipei codex-switch usage --all` 指定該次顯示的時區。
 快取額度會註記尚未確認；無額度資料顯示 `Quota: not available`。
 供程式讀取時使用 `--json`，其資料格式不受文字排版影響。
+
+狀態標記以所有額度視窗的最低剩餘比例判斷：綠色 `[OK]`（至少 5%）、
+橙色 `[LOW <5%]`（大於 0、低於 5%）、紅色 `[EMPTY]`（用盡）或
+`[LOGIN REQUIRED]`（需重新登入）。青色 `*` 只表示原生登入身分。
+忙碌、未知、未查詢或查詢已滿 60 秒的資料以灰色未確認／快取標示，
+不以綠色表示目前健康。顯示用的 5% 門檻不改動自動切換設定。
+只有互動終端使用色碼；管線、檔案與 JSON 輸出保持無色。
+設定 `NO_COLOR=1` 或 `TERM=dumb` 可停用色彩；基本色終端以黃色代替橙色。
 
 另一種實驗性模式 `run --auto`：啟動專用 Codex 會話並監測、切換。
 若你使用一般 `codex`，請使用下方「原生 Codex」章節的 `auto`：

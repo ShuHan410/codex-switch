@@ -10,6 +10,19 @@ For change scope, safety and verification rules, read [AGENTS.md](AGENTS.md).
 Do not treat synthetic/local protocol checks as production seamless-switch proof.
 Documentation-only edits need not create another runtime-verification entry.
 
+# Local time and health colors — 2026-09-16
+
+Checked/reset text uses host-local time (or TZ), seconds and explicit UTC offset.
+Stored/JSON timestamps remain unchanged. Interactive terminals color account
+badges and percentages; non-TTY, NO_COLOR and TERM=dumb remain plain text.
+Green/low/empty use minimum quota headroom; unknown or >=60s-old checks are
+muted. The display threshold does not change automatic-switch settings.
+
+`npm test`: exit 0, 50 passed, 0 failed. Coverage includes DST, fractional offsets,
+5%/0% boundaries, stale/unknown states, CLI local-time output, unchanged JSON,
+and existing switching regressions. No real credentials, quota calls or native
+login changes were used. No production seamless-switch test was performed.
+
 # Terminal presentation refresh — 2026-09-16
 
 Presentation-only: grouped help, aligned account/plan/state rows, separate
