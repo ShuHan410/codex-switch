@@ -82,6 +82,55 @@ test.after(() => {
   for (const root of tempRoots) fs.rmSync(root, { recursive: true, force: true });
 });
 
+test('CLI syntax errors identify the bad input and show command-specific usage', { concurrency: false }, async () => {
+  resetEnv(); const root = temp();
+  process.env.CODEX_HOME = path.join(root, 'native');
+  process.env.CODEX_SWITCH_HOME = path.join(root, 'pool');
+  const cases = [
+    { argv: ['login'], message: /missing required argument: NAME/, usage: /codex-switch login NAME \[--device-auth\]/, hint: /NAME must be 1/ },
+    { argv: ['login', '--device-auth'], message: /missing required argument: NAME/, usage: /codex-switch login NAME \[--device-auth\]/ },
+    { argv: ['import'], message: /missing required argument: NAME/, usage: /codex-switch import NAME/ },
+    { argv: ['use'], message: /missing required argument: NAME/, usage: /codex-switch use NAME/ },
+    { argv: ['remove'], message: /missing required argument: NAME/, usage: /codex-switch remove NAME/ },
+    { argv: ['rename'], message: /missing required argument: OLD_NAME/, usage: /codex-switch rename OLD_NAME NEW_NAME/ },
+    { argv: ['rename', 'old'], message: /missing required argument: NEW_NAME/, usage: /codex-switch rename OLD_NAME NEW_NAME/ },
+    { argv: ['auto', '--min-remaining'], message: /option --min-remaining requires PERCENT/, usage: /codex-switch auto/ },
+    { argv: ['list', '--codex-home'], message: /option --codex-home requires PATH/, usage: /codex-switch list/ },
+    { argv: ['run', '--account'], message: /option --account requires NAME/, usage: /codex-switch run/ },
+    { argv: ['login', '--bogus'], message: /unknown option: --bogus/, usage: /codex-switch login/ },
+    { argv: ['remove', '-x'], message: /unknown option: -x/, usage: /codex-switch remove/ },
+    { argv: ['list', '--all'], message: /unknown option: --all/, usage: /codex-switch list/ },
+    { argv: ['rename', 'old', 'bad/name'], message: /invalid NEW_NAME: "bad\/name"/, usage: /codex-switch rename/, hint: /NEW_NAME must be 1/ },
+    { argv: ['status', 'extra'], message: /unexpected argument: "extra"/, usage: /codex-switch status/ },
+    { argv: ['usage', 'alpha', '--all'], message: /choose either NAME or --all, not both/, usage: /codex-switch usage/ },
+    { argv: ['auto', '--min-remaining', '101'], message: /invalid value for --min-remaining: "101"/, usage: /codex-switch auto/, hint: /PERCENT must be between 0 and 100/ },
+  ];
+  for (const item of cases) {
+    process.exitCode = undefined;
+    const result = await capturedMain(item.argv);
+    const output = result.err.join('\n');
+    assert.equal(result.code, 1, item.argv.join(' '));
+    assert.match(output, /^codex-switch: Error:/, item.argv.join(' '));
+    assert.match(output, item.message, item.argv.join(' '));
+    assert.match(output, /\nUsage:\n  /, item.argv.join(' '));
+    assert.match(output, item.usage, item.argv.join(' '));
+    if (item.hint) assert.match(output, item.hint, item.argv.join(' '));
+    assert.doesNotMatch(output, /\x1b\[/, item.argv.join(' '));
+  }
+  resetEnv();
+});
+
+test('runtime failures do not add irrelevant command usage', { concurrency: false }, async () => {
+  resetEnv(); const root = temp();
+  process.env.CODEX_HOME = path.join(root, 'native');
+  process.env.CODEX_SWITCH_HOME = path.join(root, 'pool');
+  const result = await capturedMain(['run']);
+  assert.equal(result.code, 1);
+  assert.match(result.err.join('\n'), /^codex-switch: Error: No selected account/);
+  assert.doesNotMatch(result.err.join('\n'), /Usage:/);
+  resetEnv();
+});
+
 test('import snapshots current login into managed storage and supports later login renewal', { concurrency: false }, async () => {
   resetEnv(); const root = temp(); const source = path.join(root, 'source'); auth(source, 'imported');
   process.env.CODEX_HOME = source; process.env.CODEX_SWITCH_HOME = path.join(root, 'pool');

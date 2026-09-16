@@ -6,6 +6,20 @@ import { Pool, Failure, nameCheck, credentialIdentity, privateDir, prepareHome, 
 
 const USAGE_CONCURRENCY = 2;
 
+const commandUsage = {
+  login: 'codex-switch login NAME [--device-auth]',
+  import: 'codex-switch import NAME [--source-home PATH]',
+  rename: 'codex-switch rename OLD_NAME NEW_NAME',
+  remove: 'codex-switch remove NAME',
+  list: 'codex-switch list [--json] [--codex-home PATH]',
+  usage: 'codex-switch usage [NAME | --all] [--json] [--codex-home PATH]',
+  use: 'codex-switch use NAME [--codex-home PATH]',
+  auto: 'codex-switch auto [--min-remaining PERCENT] [--poll-interval SECONDS] [--codex-home PATH] [--once]',
+  status: 'codex-switch status [--auto]',
+  run: 'codex-switch run [--account NAME | --auto] [--min-remaining PERCENT] [--poll-interval SECONDS] [-- ARGS...]',
+  doctor: 'codex-switch doctor',
+};
+
 const help = `codex-switch 0.4.0 — ChatGPT subscription accounts for Codex CLI
 
 ACCOUNTS
@@ -110,14 +124,48 @@ function show(accounts, selected, json, detail = false, native = { state: 'unkno
   console.log('Marker: * = native login file match; run default is separate.');
   if (!detail) console.log('Check remaining quota: codex-switch usage --all');
 }
-function take(args, flag) {
-  const i = args.indexOf(flag);
+class CliFailure extends Failure {
+  constructor(message, command, hint) {
+    super(message);
+    this.usage = commandUsage[command];
+    this.hint = hint;
+  }
+}
+function quoted(value) { return JSON.stringify(clean(value)); }
+function nameRule(label) { return `${label} must be 1–48 letters, digits, underscores, or hyphens.`; }
+function looksLikeOption(value) { return value.startsWith('-'); }
+function requiredName(args, command, label = 'NAME') {
+  const value = args.shift();
+  if (value === undefined) throw new CliFailure(`missing required argument: ${label}`, command, nameRule(label));
+  if (looksLikeOption(value)) throw new CliFailure(`unknown option: ${value}`, command);
+  try { return nameCheck(value); }
+  catch (e) {
+    if (!(e instanceof Failure)) throw e;
+    throw new CliFailure(`invalid ${label}: ${quoted(value)}`, command, nameRule(label));
+  }
+}
+function optionalName(value, command, label = 'NAME') {
+  if (value === undefined) return undefined;
+  if (looksLikeOption(value)) throw new CliFailure(`unknown option: ${value}`, command);
+  try { return nameCheck(value); }
+  catch (e) {
+    if (!(e instanceof Failure)) throw e;
+    throw new CliFailure(`invalid ${label}: ${quoted(value)}`, command, nameRule(label));
+  }
+}
+function take(args, option, command, valueLabel) {
+  const i = args.indexOf(option);
   if (i < 0) return undefined;
-  if (!args[i + 1] || args[i + 1].startsWith('--')) throw new Failure(`${flag} requires a value.`);
+  if (!args[i + 1] || args[i + 1].startsWith('--'))
+    throw new CliFailure(`option ${option} requires ${valueLabel}`, command);
   const value = args[i + 1]; args.splice(i, 2); return value;
 }
 function flag(args, name) { const i = args.indexOf(name); if (i < 0) return false; args.splice(i, 1); return true; }
-function none(args) { if (args.length) throw new Failure('Unexpected arguments. See codex-switch --help.'); }
+function none(args, command) {
+  if (!args.length) return;
+  const value = args[0];
+  throw new CliFailure(looksLikeOption(value) ? `unknown option: ${value}` : `unexpected argument: ${quoted(value)}`, command);
+}
 
 export async function main(argv = process.argv.slice(2)) {
   process.umask(0o077);
@@ -128,20 +176,23 @@ export async function main(argv = process.argv.slice(2)) {
     const pool = new Pool();
     const original = path.resolve(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'));
     if (command === 'list' || command === 'usage') {
-      const home = path.resolve(take(args, '--codex-home') || original);
+      const home = path.resolve(take(args, '--codex-home', command, 'PATH') || original);
       const json = flag(args, '--json');
-      const all = flag(args, '--all');
-      const name = args.shift(); none(args);
-      if (name && all || command === 'list' && name) throw new Failure('Choose one account or --all.');
-      const names = name ? [nameCheck(name)] : pool.names();
+      const all = command === 'usage' ? flag(args, '--all') : false;
+      let name;
+      if (command === 'list') none(args, command);
+      else { name = args.shift(); none(args, command); }
+      if (name && all) throw new CliFailure('choose either NAME or --all, not both', command);
+      name = optionalName(name, command);
+      const names = name ? [name] : pool.names();
       const accounts = command === 'usage'
         ? await mapConcurrent(names, USAGE_CONCURRENCY, n => probe(pool, n))
         : names.map(n => pool.get(n));
       show(accounts, pool.selected(), json, command === 'usage', nativeLogin(pool, home));
       if (command === 'usage' && accounts.some(a => !['ready', 'limited'].includes(a.state))) process.exitCode = 2;
     } else if (command === 'import') {
-      const source = path.resolve(take(args, '--source-home') || original);
-      const name = nameCheck(args.shift()); none(args);
+      const source = path.resolve(take(args, '--source-home', command, 'PATH') || original);
+      const name = requiredName(args, command); none(args, command);
       privateDir(pool.dir(name));
       const release = pool.accountLock(name);
       let stage;
@@ -164,7 +215,7 @@ export async function main(argv = process.argv.slice(2)) {
       } finally { if (stage) fs.rmSync(stage, { recursive: true, force: true }); release(); }
     } else if (command === 'login') {
       const device = flag(args, '--device-auth');
-      const name = nameCheck(args.shift()); none(args);
+      const name = requiredName(args, command); none(args, command);
       let existing = pool.names().includes(name) ? pool.get(name) : null;
       if (existing && !existing.managed)
         throw new Failure('This account uses your original Codex home. Re-login there with codex login, then run usage.');
@@ -191,35 +242,36 @@ export async function main(argv = process.argv.slice(2)) {
         }
       } finally { if (stage) fs.rmSync(stage, { recursive: true, force: true }); release(); }
     } else if (command === 'rename') {
-      const name = nameCheck(args.shift()); const next = nameCheck(args.shift()); none(args);
+      const name = requiredName(args, command, 'OLD_NAME');
+      const next = requiredName(args, command, 'NEW_NAME'); none(args, command);
       pool.rename(name, next);
       console.log(`Renamed ${name} to ${next}. Credentials and native login unchanged.`);
     } else if (command === 'remove') {
-      const name = nameCheck(args.shift()); none(args);
+      const name = requiredName(args, command); none(args, command);
       const archive = pool.remove(name);
       console.log(`Removed ${name} from the pool. Native login unchanged. Credentials/history retained; recovery record: ${archive}`);
     } else if (command === 'use') {
-      const home = path.resolve(take(args, '--codex-home') || original);
-      const name = nameCheck(args.shift()); none(args);
+      const home = path.resolve(take(args, '--codex-home', command, 'PATH') || original);
+      const name = requiredName(args, command); none(args, command);
       const { useNative } = await import('./auto.mjs');
       const target = useNative(pool, home, name);
       console.log(`Native login set to ${name}: ${target}/auth.json. Default selection updated; running sessions are not checked.`);
     } else if (command === 'auto') {
-      const rawMin = take(args, '--min-remaining');
-      const rawInterval = take(args, '--poll-interval');
-      const home = path.resolve(take(args, '--codex-home') || original);
-      const once = flag(args, '--once'); none(args);
+      const rawMin = take(args, '--min-remaining', command, 'PERCENT');
+      const rawInterval = take(args, '--poll-interval', command, 'SECONDS');
+      const home = path.resolve(take(args, '--codex-home', command, 'PATH') || original);
+      const once = flag(args, '--once'); none(args, command);
       const minRemaining = rawMin === undefined ? 5 : Number(rawMin);
       const interval = rawInterval === undefined ? 30 : Number(rawInterval);
       if (!Number.isFinite(minRemaining) || minRemaining < 0 || minRemaining > 100)
-        throw new Failure('min-remaining must be between 0 and 100.');
+        throw new CliFailure(`invalid value for --min-remaining: ${quoted(rawMin)}`, command, 'PERCENT must be between 0 and 100.');
       if (!Number.isInteger(interval) || interval < 5 || interval > 3600)
-        throw new Failure('poll-interval must be an integer between 5 and 3600 seconds.');
+        throw new CliFailure(`invalid value for --poll-interval: ${quoted(rawInterval)}`, command, 'SECONDS must be an integer between 5 and 3600.');
       const { runAuto } = await import('./auto.mjs');
       await runAuto(pool, home, { minRemaining, interval, once });
     } else if (command === 'status') {
       const auto = flag(args, '--auto');
-      none(args);
+      none(args, command);
       const status = readJSON(path.join(pool.root, auto ? 'auto' : 'live', 'status.json'), null);
       if (!status) { console.log(`No ${auto ? 'native monitor' : 'live automatic session'} has been started.`); return; }
       let state = status.state;
@@ -233,14 +285,17 @@ export async function main(argv = process.argv.slice(2)) {
     } else if (command === 'run') {
       const sep = args.indexOf('--');
       const forwarded = sep < 0 ? [] : args.splice(sep).slice(1);
-      const auto = flag(args, '--auto'); const specified = take(args, '--account');
-      const rawMin = take(args, '--min-remaining');
-      const rawInterval = take(args, '--poll-interval');
+      const auto = flag(args, '--auto'); const specified = take(args, '--account', command, 'NAME');
+      const rawMin = take(args, '--min-remaining', command, 'PERCENT');
+      const rawInterval = take(args, '--poll-interval', command, 'SECONDS');
       const interval = rawInterval === undefined ? 30 : Number(rawInterval);
-      const min = rawMin === undefined ? 10 : Number(rawMin); none(args);
-      if (!Number.isFinite(min) || min < 0 || min > 100) throw new Failure('min-remaining must be between 0 and 100.');
-      if (!Number.isInteger(interval) || interval < 5 || interval > 3600) throw new Failure('poll-interval must be an integer between 5 and 3600 seconds.');
-      if (auto && specified || !auto && (rawMin !== undefined || rawInterval !== undefined)) throw new Failure('Use --auto with polling/threshold options, without --account.');
+      const min = rawMin === undefined ? 10 : Number(rawMin); none(args, command);
+      if (!Number.isFinite(min) || min < 0 || min > 100)
+        throw new CliFailure(`invalid value for --min-remaining: ${quoted(rawMin)}`, command, 'PERCENT must be between 0 and 100.');
+      if (!Number.isInteger(interval) || interval < 5 || interval > 3600)
+        throw new CliFailure(`invalid value for --poll-interval: ${quoted(rawInterval)}`, command, 'SECONDS must be an integer between 5 and 3600.');
+      if (auto && specified || !auto && (rawMin !== undefined || rawInterval !== undefined))
+        throw new CliFailure('use --auto with polling/threshold options, without --account', command);
       // These options would invalidate account binding or target a different backend.
       if (forwarded.some(x => /^(--remote(?:=|$)|--oss$|--local-provider(?:=|$)|--profile(?:=|$)|-p)/.test(x)) ||
           forwarded.some(x => /^(?:[^=]+\.)?(cli_auth_credentials_store|forced_login_method|forced_chatgpt_workspace_id|model_providers?(?:\.[^=]+)?|chatgpt_base_url)\s*=/.test(x.replace(/^(--config=|-c=?)/, '').replaceAll('"', '').replaceAll("'", '').trim())) ||
@@ -262,16 +317,17 @@ export async function main(argv = process.argv.slice(2)) {
         process.exitCode = await native(a.home, [...authArgs, ...forwarded]);
       } finally { release(); }
     } else if (command === 'doctor') {
-      none(args);
+      none(args, command);
       console.log(`Pool: ${pool.root}\nNode: ${process.version}\nSelected: ${pool.selected() || '(none)'}`);
       for (const n of pool.names()) {
         try { const a = pool.get(n); const id = credentialIdentity(a.home); console.log(`${n}: ${id.identity === a.identity ? 'local credentials match (not a server check)' : 'IDENTITY CHANGED'}`); }
         catch (e) { console.log(`${n}: ${e instanceof Failure ? e.message : 'Local check failed'}`); process.exitCode = 2; }
       }
       const code = await native(original, ['--version']); if (code) process.exitCode = code;
-    } else throw new Failure('Unknown command. See codex-switch --help.');
+    } else throw new Failure(`Unknown command: ${quoted(command)}. Run codex-switch --help to list commands.`);
   } catch (e) {
-    console.error(`codex-switch: ${e instanceof Failure ? e.message : 'Operation failed. Check storage permissions and local configuration.'}`);
+    const message = e instanceof Failure ? e.message : 'Operation failed. Check storage permissions and local configuration.';
+    console.error(`codex-switch: ${paint('Error:', 'bad', process.stderr)} ${message}${e instanceof CliFailure && e.usage ? `\n\nUsage:\n  ${e.usage}` : ''}${e instanceof CliFailure && e.hint ? `\n\n${e.hint}` : ''}`);
     process.exitCode = e instanceof Failure && e.state === 'busy' ? 3 : e.state === 'interrupted' ? 130 : e.state === 'terminated' ? 143 : 1;
   }
 }
