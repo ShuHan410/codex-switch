@@ -10,6 +10,21 @@ For change scope, safety and verification rules, read [AGENTS.md](AGENTS.md).
 Do not treat synthetic/local protocol checks as production seamless-switch proof.
 Documentation-only edits need not create another runtime-verification entry.
 
+# Native monitor terminal activity — 2026-09-16
+
+`auto` now reports startup and shutdown, refreshes one heartbeat line in an
+interactive terminal after each quota check, and preserves switch/warning events
+as separate lines. Redirected output omits periodic heartbeats and deduplicates
+unchanged warnings; `--quiet` retains the former silent behavior. `status --auto`
+was removed; plain `status` remains for the experimental `run --auto` session.
+
+`npm test`: exit 0, 58 passed, 0 failed. Coverage includes interactive heartbeat
+refreshes, redirected-output suppression and warning deduplication, `--once`
+summaries, `--quiet`, removed `status --auto`, switching, and signal/lock cleanup.
+No real credentials, quota service, native account pool, or production Codex
+session was used. Interactive rendering was verified through a synthetic output
+sink rather than a real terminal.
+
 # Bounded parallel usage queries — 2026-09-16
 
 `usage --all` now probes at most two independent account homes concurrently,

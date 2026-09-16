@@ -97,7 +97,7 @@ codex
 | `list [--json]` | 列出帳號與目前原生登入，不查最新額度 |
 | `usage [NAME \| --all] [--json]` | 查詢單一或全部帳號的最新額度 |
 | `use NAME` | 切換原生登入並更新工具預設帳號 |
-| `auto`／`status --auto` | 執行／查看原生登入自動監控 |
+| `auto` | 執行原生登入自動監控並在終端顯示狀態 |
 | `run [--account NAME] [-- ARGS...]` | 用獨立 home 啟動 Codex |
 | `rename OLD NEW` | 修改池內帳號名稱 |
 | `remove NAME` | 將帳號移出池，保留可復原資料 |
@@ -172,11 +172,14 @@ codex-switch auto
 codex-switch auto --min-remaining 5 --poll-interval 30
 codex-switch auto --codex-home "$HOME/.codex"
 codex-switch auto --once          # 執行一輪；必要時仍會切換
-codex-switch status --auto
+codex-switch auto --quiet         # 保持安靜，仍照常監控及切換
 ```
 
-剛好等於門檻時不切換；低於門檻才觸發。正常監控不印通知，按 Ctrl-C 停止，
-已完成的切換不會還原。同一帳號池與原生 home 同時只允許一個監控器。
+剛好等於門檻時不切換；低於門檻才觸發。啟動後會印出監控設定；互動式終端
+會在同一行更新目前帳號、剩餘額度與下次檢查時間，切換或警告則另起一行。
+輸出被重新導向時不印週期心跳，避免產生大量紀錄；`--quiet` 可關閉所有正常
+輸出。按 Ctrl-C 停止後，已完成的切換不會還原。同一帳號池與原生 home 同時
+只允許一個監控器。
 
 `auto` 只負責更新登入檔，不啟動、接管、重啟或重送既有 session，也不確認
 既有 session 是否採用新帳號。手動執行原生 `codex login/logout` 或 `use`

@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { spawn, spawnSync } from 'node:child_process';
 import { Pool, probe } from '../src/core.mjs';
-import { NativeAuto } from '../src/auto.mjs';
+import { AutoReporter, NativeAuto } from '../src/auto.mjs';
 
 const future = () => Date.now() / 1000 + 3600;
 
@@ -210,6 +210,34 @@ test('overlapping ticks coalesce into one native poll, and closed polling is ine
   assert.equal(f.calls.length, 1);
 });
 
+test('interactive auto output refreshes heartbeats and preserves important events', () => {
+  let output = '';
+  const reporter = new AutoReporter({ output: { write: value => { output += value; } }, interactive: true, interval: 30 });
+  reporter.start(5);
+  reporter.record({ state: 'watching', active: 'alpha', remainingPercent: 60 });
+  reporter.record({ state: 'watching', active: 'alpha', remainingPercent: 59 });
+  reporter.record({ state: 'switched', previous: 'alpha', active: 'beta', remainingPercent: 80 });
+  reporter.stop('beta');
+  assert.match(output, /Auto monitor started: threshold=5%, interval=30s/);
+  assert.match(output, /Watching alpha - 60% left - next check in 30s/);
+  assert.match(output, /Watching alpha - 59% left - next check in 30s/);
+  assert.match(output, /Switched alpha -> beta - 80% left/);
+  assert.match(output, /Auto monitor stopped\. Current native login remains beta\./);
+  assert.match(output, /\r/);
+});
+
+test('redirected auto output omits heartbeats and deduplicates repeated warnings', () => {
+  let output = '';
+  const reporter = new AutoReporter({ output: { write: value => { output += value; } }, interactive: false, interval: 30 });
+  reporter.start(5);
+  reporter.record({ state: 'watching', active: 'alpha', remainingPercent: 4 });
+  reporter.record({ state: 'no-alternative', active: 'alpha', remainingPercent: 4 });
+  reporter.record({ state: 'watching', active: 'alpha', remainingPercent: 4 });
+  reporter.record({ state: 'no-alternative', active: 'alpha', remainingPercent: 4 });
+  assert.doesNotMatch(output, /Watching alpha/);
+  assert.equal(output.match(/no eligible alternative/g)?.length, 1);
+});
+
 const cli = path.resolve(import.meta.dirname, '../bin/codex-switch.mjs');
 const fakeCodex = path.resolve(import.meta.dirname, 'fixtures/fake-codex');
 function cliEnv(f) {
@@ -391,14 +419,23 @@ test('auto --once wires native quota probes to file replacement and status witho
   const f = fixture(t);
   const result = spawnSync(process.execPath, [cli, 'auto', '--once'], { env: cliEnv(f), encoding: 'utf8', timeout: 10000 });
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout, ''); assert.equal(result.stderr, '');
+  assert.match(result.stdout, /Auto check started: threshold=5%, interval=30s/);
+  assert.match(result.stdout, /Switched alpha -> beta - 80% left/);
+  assert.match(result.stdout, /Auto check complete\./); assert.equal(result.stderr, '');
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.native, 'auth.json'))), JSON.parse(f.canonical.beta));
   const status = JSON.parse(fs.readFileSync(path.join(f.pool.root, 'auto/status.json')));
   assert.equal(status.lastState, 'switched'); assert.equal(status.state, 'stopped');
   assert.equal(status.minRemaining, 5); assert.equal(status.interval, 30);
   assert.equal(fs.existsSync(path.join(f.native, '.codex-switch-auto.lock')), false);
-  const viewed = spawnSync(process.execPath, [cli, 'status', '--auto'], { env: cliEnv(f), encoding: 'utf8' });
-  assert.equal(viewed.status, 0); assert.match(viewed.stdout, /Native auto: stopped; account=beta/);
+});
+
+test('auto --quiet retains the previous silent behavior and status --auto is removed', t => {
+  const f = fixture(t);
+  const quiet = spawnSync(process.execPath, [cli, 'auto', '--once', '--quiet'], { env: cliEnv(f), encoding: 'utf8', timeout: 10000 });
+  assert.equal(quiet.status, 0, quiet.stderr); assert.equal(quiet.stdout, ''); assert.equal(quiet.stderr, '');
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.native, 'auth.json'))), JSON.parse(f.canonical.beta));
+  const removed = spawnSync(process.execPath, [cli, 'status', '--auto'], { env: cliEnv(f), encoding: 'utf8' });
+  assert.equal(removed.status, 1); assert.match(removed.stderr, /unknown option: --auto/);
 });
 
 test('auto holds a singleton lock and SIGTERM releases monitor and native locks', async t => {

@@ -4,6 +4,64 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { Failure, credentialSnapshot, atomicJSON, privateDir, lock, probe, choose, headroom } from './core.mjs';
 
+function clean(value) { return String(value ?? '-').replace(/[\x00-\x1f\x7f-\x9f]/g, '?'); }
+function clock(value = new Date().toISOString()) {
+  const date = new Date(value); const pad = number => String(number).padStart(2, '0');
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+export class AutoReporter {
+  constructor({ output = process.stdout, interactive = Boolean(output.isTTY), quiet = false, once = false, interval = 30 } = {}) {
+    this.output = output; this.interactive = interactive; this.quiet = quiet;
+    this.once = once; this.interval = interval; this.liveWidth = 0; this.lastEvent = null;
+  }
+  line(message) {
+    if (this.quiet) return;
+    this.clearLive(); this.output.write(`${message}\n`);
+  }
+  clearLive() {
+    if (!this.liveWidth) return;
+    this.output.write(`\r${' '.repeat(this.liveWidth)}\r`); this.liveWidth = 0;
+  }
+  live(message) {
+    if (this.quiet || !this.interactive) return;
+    const padding = ' '.repeat(Math.max(0, this.liveWidth - message.length));
+    this.output.write(`\r${message}${padding}`); this.liveWidth = message.length;
+  }
+  start(minRemaining) {
+    this.minRemaining = minRemaining;
+    this.line(`Auto ${this.once ? 'check' : 'monitor'} started: threshold=${clean(minRemaining)}%, interval=${clean(this.interval)}s.`);
+    this.line('Monitoring the native login only; existing Codex sessions are not restarted.');
+    if (!this.once) this.line('Press Ctrl-C to stop. Use --quiet to suppress output.');
+  }
+  record(value) {
+    if (this.quiet || value.state === 'starting' || value.state === 'stopped') return;
+    const prefix = `[${clock()}]`;
+    if (value.state === 'watching') {
+      const message = `${prefix} Watching ${clean(value.active)} - ${clean(value.remainingPercent)}% left${this.once ? '' : ` - next check in ${this.interval}s`}`;
+      if (value.remainingPercent >= this.minRemaining && value.remainingPercent > 0) this.lastEvent = null;
+      if (this.once) this.line(message); else this.live(message);
+      return;
+    }
+    const messages = {
+      switched: `Switched ${clean(value.previous)} -> ${clean(value.active)} - ${clean(value.remainingPercent)}% left`,
+      unregistered: `Warning: native login is not an independently managed pool account`,
+      changed: `Warning: native login changed during polling; no switch was made`,
+      unknown: `Warning: quota is unavailable; keeping the current native login`,
+      busy: `Warning: account is busy; retrying on the next check`,
+      'no-alternative': `Warning: no eligible alternative; keeping ${clean(value.active)} at ${clean(value.remainingPercent)}% left`,
+    };
+    const message = messages[value.state];
+    if (!message) return;
+    const key = `${value.state}\0${value.active}\0${value.previous}\0${value.remainingPercent}\0${value.error}`;
+    if (key === this.lastEvent) return;
+    this.lastEvent = key; this.line(`${prefix} ${message}`);
+  }
+  stop(active) {
+    this.line(this.once ? 'Auto check complete.' : `Auto monitor stopped. Current native login remains ${clean(active)}.`);
+  }
+}
+
 function nativeHome(home) {
   const fd = fs.openSync(home, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
   try {
@@ -154,24 +212,28 @@ export class NativeAuto {
   }
 }
 
-export async function runAuto(pool, home, { minRemaining = 5, interval = 30, once = false } = {}) {
+export async function runAuto(pool, home, { minRemaining = 5, interval = 30, once = false, quiet = false,
+  reporter = new AutoReporter({ quiet, once, interval }) } = {}) {
   // Secure the owned native home before writing credentials or lock files.
   home = nativeHome(home);
   const dir = path.join(pool.root, 'auto'); privateDir(dir);
   const release = lock(path.join(dir, '.lock'));
   let homeRelease, timer, wake, controller;
+  let started = false;
   let stopped = false;
   let snapshot = { pid: process.pid, host: os.hostname(), home, minRemaining, interval,
     startedAt: new Date().toISOString(), state: 'starting', active: null, remainingPercent: null };
   const record = value => {
     snapshot = { ...snapshot, error: undefined, ...value, checkedAt: new Date().toISOString() };
     atomicJSON(path.join(dir, 'status.json'), snapshot);
+    reporter.record(value);
   };
   const stop = () => { stopped = true; if (controller) controller.closed = true; clearTimeout(timer); wake?.(); };
   process.on('SIGINT', stop); process.on('SIGTERM', stop);
   try {
     homeRelease = lock(path.join(home, '.codex-switch-auto.lock'));
     controller = new NativeAuto(pool, home, { minRemaining, record });
+    reporter.start(minRemaining); started = true;
     record({ state: 'starting' });
     do {
       await controller.tick();
@@ -182,6 +244,9 @@ export async function runAuto(pool, home, { minRemaining = 5, interval = 30, onc
   } finally {
     stop();
     try { record({ state: 'stopped', lastState: snapshot.state }); }
-    finally { process.off('SIGINT', stop); process.off('SIGTERM', stop); homeRelease?.(); release(); }
+    finally {
+      if (started) reporter.stop(snapshot.active);
+      process.off('SIGINT', stop); process.off('SIGTERM', stop); homeRelease?.(); release();
+    }
   }
 }

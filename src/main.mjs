@@ -14,8 +14,8 @@ const commandUsage = {
   list: 'codex-switch list [--json] [--codex-home PATH]',
   usage: 'codex-switch usage [NAME | --all] [--json] [--codex-home PATH]',
   use: 'codex-switch use NAME [--codex-home PATH]',
-  auto: 'codex-switch auto [--min-remaining PERCENT] [--poll-interval SECONDS] [--codex-home PATH] [--once]',
-  status: 'codex-switch status [--auto]',
+  auto: 'codex-switch auto [--min-remaining PERCENT] [--poll-interval SECONDS] [--codex-home PATH] [--once] [--quiet]',
+  status: 'codex-switch status',
   run: 'codex-switch run [--account NAME | --auto] [--min-remaining PERCENT] [--poll-interval SECONDS] [-- ARGS...]',
   doctor: 'codex-switch doctor',
 };
@@ -41,7 +41,7 @@ NATIVE MONITOR — for your regular codex terminal
     --poll-interval SECONDS          Default: 30
     --codex-home PATH                Override native home
     --once                          One check; may switch the account
-  status --auto                     Inspect the native monitor
+    --quiet                         Suppress monitor output
 
 SESSIONS
   run [--account NAME] [-- CODEX_ARGS...]
@@ -59,7 +59,7 @@ QUICK START
 
 NOTES
   use / auto update the login file; existing sessions are not checked.
-  auto stays quiet. Ctrl-C stops it without undoing a switch.
+  auto shows monitor activity. Ctrl-C stops it without undoing a switch.
   run --auto shares a dedicated live home; manual runs keep per-account history.
   CODEX_HOME overrides native home (default: ~/.codex).
   CODEX_SWITCH_HOME overrides pool storage; CODEX_SWITCH_CODEX the executable.
@@ -260,7 +260,7 @@ export async function main(argv = process.argv.slice(2)) {
       const rawMin = take(args, '--min-remaining', command, 'PERCENT');
       const rawInterval = take(args, '--poll-interval', command, 'SECONDS');
       const home = path.resolve(take(args, '--codex-home', command, 'PATH') || original);
-      const once = flag(args, '--once'); none(args, command);
+      const once = flag(args, '--once'); const quiet = flag(args, '--quiet'); none(args, command);
       const minRemaining = rawMin === undefined ? 5 : Number(rawMin);
       const interval = rawInterval === undefined ? 30 : Number(rawInterval);
       if (!Number.isFinite(minRemaining) || minRemaining < 0 || minRemaining > 100)
@@ -268,19 +268,17 @@ export async function main(argv = process.argv.slice(2)) {
       if (!Number.isInteger(interval) || interval < 5 || interval > 3600)
         throw new CliFailure(`invalid value for --poll-interval: ${quoted(rawInterval)}`, command, 'SECONDS must be an integer between 5 and 3600.');
       const { runAuto } = await import('./auto.mjs');
-      await runAuto(pool, home, { minRemaining, interval, once });
+      await runAuto(pool, home, { minRemaining, interval, once, quiet });
     } else if (command === 'status') {
-      const auto = flag(args, '--auto');
       none(args, command);
-      const status = readJSON(path.join(pool.root, auto ? 'auto' : 'live', 'status.json'), null);
-      if (!status) { console.log(`No ${auto ? 'native monitor' : 'live automatic session'} has been started.`); return; }
+      const status = readJSON(path.join(pool.root, 'live', 'status.json'), null);
+      if (!status) { console.log('No live automatic session has been started.'); return; }
       let state = status.state;
       if (state !== 'stopped' && status.host === os.hostname()) {
         try { process.kill(status.pid, 0); } catch (e) { if (e.code === 'ESRCH') state = 'stale'; }
       }
-      console.log(`${auto ? 'Native auto' : 'Live auto'}: ${clean(state)}; account=${clean(status.active)}\n`);
+      console.log(`Live auto: ${clean(state)}; account=${clean(status.active)}\n`);
       console.log(`  Remaining  ${clean(status.remainingPercent)}% left\n  Threshold  ${clean(status.minRemaining)}%\n  Checked    ${localTime(status.checkedAt)}`);
-      if (auto) console.log(`  Home       ${clean(status.home)}\n  Last event ${clean(status.lastState || status.state)}`);
       if (status.error) console.log(`  Note       ${clean(status.error)}`);
     } else if (command === 'run') {
       const sep = args.indexOf('--');
