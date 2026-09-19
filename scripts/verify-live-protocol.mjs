@@ -75,9 +75,17 @@ try {
     await rpc.request('turn/start', { threadId: thread.id, input: [{ type: 'text', text: 'Reply OK.' }] });
     const result = await done; assert.equal(result.status, 'completed');
   }
-  await turn(); percent.alpha = 5; await monitor.tick();
+  await turn();
+  const beforeDiskSwitch = (await rpc.request('account/read', { refreshToken: false })).account.email;
+  fs.writeFileSync(path.join(home, 'auth.json'), originals.get(pool.get('beta').home), { mode: 0o600 });
+  await turn();
+  const afterDiskSwitch = (await rpc.request('account/read', { refreshToken: false })).account.email;
+  assert.equal(beforeDiskSwitch, 'alpha@example.test'); assert.equal(afterDiskSwitch, beforeDiskSwitch);
+  assert.deepEqual(requests, ['alpha', 'alpha']);
+  fs.rmSync(path.join(home, 'auth.json'));
+  percent.alpha = 5; await monitor.tick();
   assert.equal(monitor.active.name, 'beta'); await turn();
-  assert.deepEqual(requests, ['alpha', 'beta']);
+  assert.deepEqual(requests, ['alpha', 'alpha', 'beta']);
   if (process.argv.includes('--ui-smoke')) {
     console.log('Opening synthetic native UI; exit with Ctrl-C without entering a prompt.');
     const ignoreInterrupt = () => {};
@@ -86,13 +94,14 @@ try {
       const ui = spawn(codexBinary(), ['--remote', `unix://${socket}`, '--no-alt-screen', '-C', home, '--sandbox', 'read-only'], { env: codexEnv(home), stdio: 'inherit' });
       const code = await new Promise((resolve, reject) => { ui.once('error', reject); ui.once('exit', resolve); });
       assert.equal(code, 0);
-      assert.deepEqual(requests, ['alpha', 'beta']);
+      assert.deepEqual(requests, ['alpha', 'alpha', 'beta']);
       console.log('Native remote UI smoke passed (no additional model request).');
     } finally { process.off('SIGINT', ignoreInterrupt); }
   }
   for (const [dir, text] of originals) assert.equal(fs.readFileSync(path.join(dir, 'auth.json'), 'utf8'), text);
   assert.equal(fs.existsSync(path.join(home, 'auth.json')), false);
-  console.log(JSON.stringify({ passed: true, sameThread: true, requestAccounts: requests, automaticQuotaTrigger: true, canonicalCredentialsUnchanged: true, runtimeCredentialsOnDisk: false }));
+  console.log(JSON.stringify({ passed: true, sameThread: true, diskReplacementIgnoredByRunningService: true,
+    requestAccounts: requests, automaticQuotaTrigger: true, canonicalCredentialsUnchanged: true, runtimeCredentialsOnDisk: false }));
 } catch (e) { console.error('Protocol verification failed:', e.message); process.exitCode = 1; }
 finally {
   rpc?.close(); await monitor?.close();

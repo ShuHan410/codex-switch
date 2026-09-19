@@ -35,7 +35,8 @@
 - `use` 寫入原生 home 的登入檔，也更新工具預設選擇；不是只改池內標記。
   原生 home 依 `--codex-home`／`CODEX_HOME`／`~/.codex` 選定。
 - `auto` 查原生登入身分與額度，沿用手動切換流程；不啟動、接管或確認既有
-  session，不重送工作、不印通知。`run --auto` 是另一個實驗性模式。
+  session，不重送工作，且輸出不可宣稱既有 session 已切換。`run --auto` 是
+  另一個實驗性模式。
 - `list`／`usage` 的 `*` 來自實際原生登入檔，不等於工具的預設選擇。
   JSON 的 `active` 與 `selected` 不可混用；未知身分不可沿用舊標記。
 - 身分比對依登入檔的 `sub` 與 `account_id`，不是 email 或 plan。

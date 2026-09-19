@@ -10,6 +10,30 @@ For change scope, safety and verification rules, read [AGENTS.md](AGENTS.md).
 Do not treat synthetic/local protocol checks as production seamless-switch proof.
 Documentation-only edits need not create another runtime-verification entry.
 
+# Running-session account boundary — 2026-09-19
+
+Diagnosed with installed `codex-cli 0.155.1`, synthetic account tokens and a
+localhost model fixture. Replacing `auth.json` while the Codex App Server was
+running did not change its in-memory account: two consecutive turns used
+`alpha`. Sending the supported `account/login/start` RPC through `run --auto`
+then changed the next turn in the same thread to `beta`. Observed request
+accounts were therefore `alpha`, `alpha`, `beta`.
+
+`auto` now states at startup and after a native-login switch that already-running
+Codex sessions keep their account, and points long-running work to
+`codex-switch run --auto`. Help and README distinguish file switching from
+same-session switching and document how to choose a raised test threshold.
+
+- `npm test`: exit 0, 58 passed, 0 failed.
+- `node scripts/verify-live-protocol.mjs`: exit 0; `sameThread: true`,
+  `diskReplacementIgnoredByRunningService: true`, `requestAccounts:
+  ["alpha","alpha","beta"]`, `automaticQuotaTrigger: true`.
+
+No real credentials, quota service or production model request was used. A
+standalone Codex session that was not launched against the controlled private
+App Server still cannot be attached or switched after startup. Production
+streaming and long-duration token refresh remain unverified.
+
 # Native monitor terminal activity — 2026-09-16
 
 `auto` now reports startup and shutdown, refreshes one heartbeat line in an

@@ -219,9 +219,12 @@ test('interactive auto output refreshes heartbeats and preserves important event
   reporter.record({ state: 'switched', previous: 'alpha', active: 'beta', remainingPercent: 80 });
   reporter.stop('beta');
   assert.match(output, /Auto monitor started: threshold=5%, interval=30s/);
+  assert.match(output, /already-running Codex sessions will not switch accounts/);
+  assert.match(output, /codex-switch run --auto/);
   assert.match(output, /Watching alpha - 60% left - next check in 30s/);
   assert.match(output, /Watching alpha - 59% left - next check in 30s/);
-  assert.match(output, /Switched alpha -> beta - 80% left/);
+  assert.match(output, /Switched native login alpha -> beta - 80% left/);
+  assert.match(output, /Running Codex sessions still use alpha/);
   assert.match(output, /Auto monitor stopped\. Current native login remains beta\./);
   assert.match(output, /\r/);
 });
@@ -420,7 +423,7 @@ test('auto --once wires native quota probes to file replacement and status witho
   const result = spawnSync(process.execPath, [cli, 'auto', '--once'], { env: cliEnv(f), encoding: 'utf8', timeout: 10000 });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Auto check started: threshold=5%, interval=30s/);
-  assert.match(result.stdout, /Switched alpha -> beta - 80% left/);
+  assert.match(result.stdout, /Switched native login alpha -> beta - 80% left/);
   assert.match(result.stdout, /Auto check complete\./); assert.equal(result.stderr, '');
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.native, 'auth.json'))), JSON.parse(f.canonical.beta));
   const status = JSON.parse(fs.readFileSync(path.join(f.pool.root, 'auto/status.json')));

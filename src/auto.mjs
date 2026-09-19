@@ -31,7 +31,8 @@ export class AutoReporter {
   start(minRemaining) {
     this.minRemaining = minRemaining;
     this.line(`Auto ${this.once ? 'check' : 'monitor'} started: threshold=${clean(minRemaining)}%, interval=${clean(this.interval)}s.`);
-    this.line('Monitoring the native login only; existing Codex sessions are not restarted.');
+    this.line('File monitor only: already-running Codex sessions will not switch accounts.');
+    this.line('For same-session switching, launch Codex with: codex-switch run --auto');
     if (!this.once) this.line('Press Ctrl-C to stop. Use --quiet to suppress output.');
   }
   record(value) {
@@ -44,7 +45,7 @@ export class AutoReporter {
       return;
     }
     const messages = {
-      switched: `Switched ${clean(value.previous)} -> ${clean(value.active)} - ${clean(value.remainingPercent)}% left`,
+      switched: `Switched native login ${clean(value.previous)} -> ${clean(value.active)} - ${clean(value.remainingPercent)}% left`,
       unregistered: `Warning: native login is not an independently managed pool account`,
       changed: `Warning: native login changed during polling; no switch was made`,
       unknown: `Warning: quota is unavailable; keeping the current native login`,
@@ -56,6 +57,8 @@ export class AutoReporter {
     const key = `${value.state}\0${value.active}\0${value.previous}\0${value.remainingPercent}\0${value.error}`;
     if (key === this.lastEvent) return;
     this.lastEvent = key; this.line(`${prefix} ${message}`);
+    if (value.state === 'switched')
+      this.line(`Running Codex sessions still use ${clean(value.previous)}. Restart them, or use codex-switch run --auto next time.`);
   }
   stop(active) {
     this.line(this.once ? 'Auto check complete.' : `Auto monitor stopped. Current native login remains ${clean(active)}.`);

@@ -1,7 +1,7 @@
 # codex-switch
 
 在終端機管理多個 Codex ChatGPT 訂閱帳號：查看剩餘額度、切換原生登入，
-並在額度不足時自動換到可用帳號。
+並可在工具啟動的受控 Codex session 中依額度自動換到可用帳號。
 
 > 非官方工具，與 OpenAI 無隸屬關係。不提供帳號、不分享訂閱，也不增加或
 > 重設額度。請只管理你有權使用的帳號，並遵守服務與組織規範。
@@ -15,7 +15,8 @@
 - 透過官方登入新增帳號，或匯入目前的 Codex 登入。
 - 查詢各帳號剩餘額度，支援純文字與 JSON。
 - 手動切換原生 `~/.codex/auth.json`。
-- 在另一個終端監控原生登入，低額度時自動切換帳號。
+- 在另一個終端監控並切換原生登入檔，供之後啟動的 Codex 使用。
+- 以實驗性的 `run --auto` 啟動受控 session，讓後續 turn 自動切換帳號。
 - 以獨立 Codex home 啟動指定帳號，隔離憑證與對話。
 - 帳號改名與可復原移除。
 
@@ -97,8 +98,9 @@ codex
 | `list [--json]` | 列出帳號與目前原生登入，不查最新額度 |
 | `usage [NAME \| --all] [--json]` | 查詢單一或全部帳號的最新額度 |
 | `use NAME` | 切換原生登入並更新工具預設帳號 |
-| `auto` | 執行原生登入自動監控並在終端顯示狀態 |
+| `auto` | 自動切換登入檔；已開啟的 Codex 不會跟著切換 |
 | `run [--account NAME] [-- ARGS...]` | 用獨立 home 啟動 Codex |
+| `run --auto [-- ARGS...]` | 啟動可在同一 session 切換帳號的 Codex（實驗性） |
 | `rename OLD NEW` | 修改池內帳號名稱 |
 | `remove NAME` | 將帳號移出池，保留可復原資料 |
 | `doctor` | 檢查本機設定，不驗證伺服器授權 |
@@ -148,7 +150,8 @@ codex-switch run -- resume --last
 
 ## 自動切換原生登入：`auto`
 
-適合平常直接執行 `codex` 的工作流：終端 A 使用 Codex，終端 B 執行監控。
+`auto` 只監控並替換原生登入檔，適合能在切換後重啟 Codex 的工作流；它無法
+接管已開啟的 Codex，也不適合要求不中斷的長時間任務。
 
 ```sh
 # 終端 A
@@ -157,6 +160,10 @@ codex
 # 終端 B
 codex-switch auto
 ```
+
+即使終端 B 顯示已切換，終端 A 的既有 Codex 仍使用啟動時載入記憶體的舊帳號；
+必須離開並重新開啟該 session 才會讀到新登入。需要同一 session 的後續 turn
+自動換帳號時，請改用下一節的 `codex-switch run --auto` 啟動 Codex。
 
 `auto` 立即檢查一次，之後預設每輪完成後等待 30 秒。它會：
 
@@ -185,22 +192,31 @@ codex-switch auto --quiet         # 保持安靜，仍照常監控及切換
 既有 session 是否採用新帳號。手動執行原生 `codex login/logout` 或 `use`
 前，請先停止 `auto`；一般 Codex 不遵守本工具的帳號鎖。
 
-## 實驗功能：`run --auto`
+## 同一 session 自動切換（實驗）：`run --auto`
 
 ```sh
 codex-switch run --auto
 codex-switch run --auto --min-remaining 10 --poll-interval 30
+codex-switch run --auto --min-remaining 20 --poll-interval 5  # 長任務保留較大緩衝
 codex-switch status
 codex-switch run --auto -- resume --last
 ```
 
-這個模式由工具啟動專用 Codex App Server 和互動終端，在同一服務內切換登入，
+長時間任務若不能因額度用盡而重啟 session，應由這個指令啟動 Codex。此模式由
+工具啟動專用 Codex App Server 和互動終端，在同一服務內透過登入 RPC 切換帳號，
 嘗試讓後續請求沿用同一 thread。預設門檻 10%、間隔 30 秒；不會中斷或重播
 已送出的 turn。對話集中在 `~/.codex/account-pool/live/codex-home/`。
 
+長任務可先執行 `codex-switch usage --all`，確認有候選帳號後提高門檻並縮短
+輪詢間隔。候選帳號本身也必須至少達到門檻，因此不要把門檻提高到所有帳號
+的剩餘量以上。`run --auto` 啟動時會先選剩餘量最高的合格帳號；帳號都充足時，
+單純提高門檻不一定能在真實帳號上立即製造第二次切換。本專案以本機合成額度
+的 `node scripts/verify-live-protocol.mjs` 做可重現的同 thread 切換驗證。
+
 此介面仍屬 experimental：無法接管已由一般 `codex` 啟動的程序；正式服務的
 長時間刷新與串流切換尚未完整驗收；同 email、不同 workspace 的歧義帳號會被
-排除；只支援互動式終端。一般使用者應優先採用上一節的 `auto`。
+排除；只支援互動式終端。可以接受切換後重啟 Codex 時，較簡單的 `auto` 仍是
+較保守的選擇。
 
 ## 資料與安全
 

@@ -36,7 +36,7 @@ CHECK & SWITCH
     list / usage / use: --codex-home PATH
 
 NATIVE MONITOR — for your regular codex terminal
-  auto                              Monitor and switch native auth.json
+  auto                              Switch auth.json for future Codex starts
     --min-remaining PERCENT          Default: 5; switch below this threshold
     --poll-interval SECONDS          Default: 30
     --codex-home PATH                Override native home
@@ -47,7 +47,7 @@ SESSIONS
   run [--account NAME] [-- CODEX_ARGS...]
                                     Launch with a separate account home
   run --auto [--min-remaining PERCENT] [--poll-interval SECONDS]
-      [-- CODEX_ARGS...]             Experimental live switching (10% / 30s)
+      [-- CODEX_ARGS...]             Same-session live switching (experimental)
   status                            Inspect the experimental live session
   doctor                            Check local setup without exposing tokens
 
@@ -58,7 +58,8 @@ QUICK START
   codex
 
 NOTES
-  use / auto update the login file; existing sessions are not checked.
+  use / auto update the login file; running Codex sessions keep their account.
+  For same-session switching, launch Codex with: codex-switch run --auto
   auto shows monitor activity. Ctrl-C stops it without undoing a switch.
   run --auto shares a dedicated live home; manual runs keep per-account history.
   CODEX_HOME overrides native home (default: ~/.codex).
