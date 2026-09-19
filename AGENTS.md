@@ -28,7 +28,7 @@
 | `scripts/verify-live-protocol.mjs` | 真實 Codex CLI 搭配本機模擬服務的協定驗證 |
 
 這是獨立的 Node.js ES module repository；不需要 Python 或其他專案環境。
-執行指令前先確認目前目錄、`git status` 和 `git remote -v`，保留無關修改。
+開始維護前先確認目前目錄、`git status` 和 `git remote -v`，保留無關修改。
 
 ## 必須保留的行為
 
@@ -69,8 +69,8 @@
 - 動手前寫明本次驗收條件；保持修改集中，不順便重構或新增依賴。
 - 首次安裝／依賴變動：`npm ci --ignore-scripts`。程式修改後執行 `npm test`；
   修 bug 時補能捕捉該問題的測試。額外驗證按風險選擇，不重複無關測試。
-- 涉及即時協定時，依 README 執行本機協定驗證；正式服務的串流、刷新與
-  無縫切換仍需另行授權及實測，不能由 mock 測試推論成功。
+- 涉及即時協定時，執行 `node scripts/verify-live-protocol.mjs`；正式服務的
+  串流、刷新與無縫切換仍需另行授權及實測，不能由 mock 測試推論成功。
 - 純文件修改：檢查差異、相對連結、路徑與指令是否符合實作，執行
   `git diff --check`；不為此操作真實帳號或重跑完整程式測試。
 - 使用者可見行為變更更新 README；有新的測試證據或限制才新增驗證紀錄，
