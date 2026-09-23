@@ -1,4 +1,4 @@
-// Real installed Codex; synthetic accounts and localhost model responses only.
+// Real installed Codex; synthetic accounts with local bootstrap/model services.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { Pool, codexBinary, codexEnv } from '../src/core.mjs';
 import { SocketRpc, LiveSwitch, tokenBundle } from '../src/live.mjs';
+import { traceRpcResponse } from './protocol-diagnostics.mjs';
 
 process.umask(0o077);
 const trace = process.argv.includes('--trace')
@@ -18,18 +19,37 @@ const socket = path.join(home, 'control.sock');
 const pool = new Pool(path.join(root, 'pool'));
 const percent = { alpha: 80, beta: 60 };
 const originals = new Map();
+const syntheticTokens = new Map();
 for (const name of Object.keys(percent)) {
   const accountHome = path.join(root, name); fs.mkdirSync(accountHome, { mode: 0o700 });
   const payload = Buffer.from(JSON.stringify({ sub: name, email: `${name}@example.test`, exp: Math.floor(Date.now()/1000)+3600,
     'https://api.openai.com/auth': { chatgpt_account_id: name, chatgpt_plan_type: 'plus', chatgpt_user_id: name } })).toString('base64url');
   const token = `eyJhbGciOiJub25lIn0.${payload}.synthetic`;
+  syntheticTokens.set(`Bearer ${token}`, name);
   const text = JSON.stringify({ auth_mode: 'chatgpt', tokens: { id_token: token, access_token: token, refresh_token: 'synthetic-only', account_id: name } });
   fs.writeFileSync(path.join(accountHome, 'auth.json'), text, { mode: 0o600 });
   originals.set(accountHome, text); pool.add(name, accountHome, true);
 }
 const requests = [];
+const routingAccounts = new Set();
 const upstream = http.createServer((req, res) => {
   req.resume();
+  if (req.method === 'GET' && ['/backend-api/wham/accounts/check', '/backend-api/wham/config/bundle'].includes(req.url)) {
+    const name = syntheticTokens.get(req.headers.authorization);
+    if (!name || req.headers['chatgpt-account-id'] !== name) {
+      res.writeHead(401); res.end('{}'); return;
+    }
+    const routing = req.url.endsWith('/accounts/check');
+    if (routing) routingAccounts.add(name);
+    trace(`local ${routing ? 'workspace routing' : 'config bundle'} request received`);
+    res.writeHead(200, { 'content-type': 'application/json' });
+    // Codex requires an HTTPS routing origin. This reserved, non-resolving
+    // origin is metadata only: the custom model provider stays on local /v1.
+    res.end(JSON.stringify(routing ? { accounts: [{ id: name,
+      workspace_backend_origin: 'https://fixture.invalid', account_routing_override: 'NO_CONSTRAINT',
+    }] } : { requirements_toml: {} }));
+    return;
+  }
   if (!req.url.endsWith('/responses')) { res.writeHead(404); res.end('{}'); return; }
   let identity;
   try { identity = JSON.parse(Buffer.from(req.headers.authorization.split('.')[1], 'base64url').toString()).sub; } catch { identity = 'missing'; }
@@ -45,10 +65,12 @@ const upstream = http.createServer((req, res) => {
   res.end();
 });
 await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
-const base = `http://127.0.0.1:${upstream.address().port}/v1`;
+const origin = `http://127.0.0.1:${upstream.address().port}`;
+const base = `${origin}/v1`;
 const model = { name: 'Local synthetic fixture', base_url: base, wire_api: 'responses', requires_openai_auth: true, supports_websockets: false };
 const providerConfig = '{' + Object.entries(model).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(',') + '}';
 const server = spawn(codexBinary(), ['app-server', '--listen', `unix://${socket}`, '-c', 'cli_auth_credentials_store="ephemeral"',
+  '-c', `chatgpt_base_url=${JSON.stringify(`${origin}/backend-api/`)}`,
   '-c', 'model_provider="fixture"', '-c', `model_providers.fixture=${providerConfig}`], {
   cwd: home, env: { ...codexEnv(home), CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED: '1' }, stdio: ['pipe', 'pipe', 'pipe'],
 });
@@ -75,11 +97,7 @@ try {
     } else if (message.method === 'account/updated') {
       trace('server notified account update');
     } else if (!message.method && message.id !== undefined) {
-      // Only numeric RPC IDs are printable; never log arbitrary server data.
-      const id = typeof message.id === 'number' && Number.isSafeInteger(message.id)
-        ? String(message.id) : typeof message.id === 'string' && /^\d{1,12}$/.test(message.id)
-          ? `string:${message.id}` : 'redacted';
-      trace(`server response id=${id} (${message.error ? 'error' : 'result'})`);
+      traceRpcResponse(message, trace);
     }
   });
   const request = rpc.request.bind(rpc);
@@ -146,6 +164,7 @@ try {
   percent.alpha = 5; await monitor.tick();
   assert.equal(monitor.active.name, 'beta'); await turn();
   assert.deepEqual(requests, ['alpha', 'alpha', 'beta']);
+  assert.deepEqual([...routingAccounts].sort(), ['alpha', 'beta']);
   if (process.argv.includes('--ui-smoke')) {
     console.log('Opening synthetic native UI; exit with Ctrl-C without entering a prompt.');
     const ignoreInterrupt = () => {};
@@ -161,7 +180,7 @@ try {
   for (const [dir, text] of originals) assert.equal(fs.readFileSync(path.join(dir, 'auth.json'), 'utf8'), text);
   assert.equal(fs.existsSync(path.join(home, 'auth.json')), false);
   console.log(JSON.stringify({ passed: true, sameThread: true, diskReplacementIgnoredByRunningService: true,
-    requestAccounts: requests, automaticQuotaTrigger: true, canonicalCredentialsUnchanged: true, runtimeCredentialsOnDisk: false }));
+    requestAccounts: requests, localWorkspaceRouting: true, automaticQuotaTrigger: true, canonicalCredentialsUnchanged: true, runtimeCredentialsOnDisk: false }));
 } catch (e) { console.error('Protocol verification failed:', e.message); process.exitCode = 1; }
 finally {
   rpc?.close(); await monitor?.close();

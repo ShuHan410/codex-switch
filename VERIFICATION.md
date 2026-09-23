@@ -10,6 +10,122 @@ For change scope, safety and verification rules, read [AGENTS.md](AGENTS.md).
 Do not treat synthetic/local protocol checks as production seamless-switch proof.
 Documentation-only edits need not create another runtime-verification entry.
 
+# Real-CLI protocol pass after routing fixture repair — 2026-09-23
+
+The user reran `node scripts/verify-live-protocol.mjs --trace` in the normal
+terminal with the repaired fixture and supplied the complete successful trace.
+Both account activations received local workspace-routing responses, and the
+real CLI completed `account/read`, `thread/start`, and all three model turns.
+The verifier reported:
+
+```json
+{"passed":true,"sameThread":true,"diskReplacementIgnoredByRunningService":true,"requestAccounts":["alpha","alpha","beta"],"localWorkspaceRouting":true,"automaticQuotaTrigger":true,"canonicalCredentialsUnchanged":true,"runtimeCredentialsOnDisk":false}
+```
+
+The child app-server then exited with code 0 and no signal. This is user-supplied
+real-CLI/local-service evidence, distinct from the agent-side startup failure
+recorded below. Together with the 71 passing automated tests and independent
+review of the unchanged fixture repair, it satisfies the synthetic protocol
+acceptance criteria. The missing local routing fixture caused the observed 401;
+no production switching-code change was needed for this failure.
+
+Production streaming, production OAuth refresh, and seamless switching against
+the official service remain unverified. The successful trace exercised no reverse
+token-refresh callback; callback ordering and deadlock protection remain covered
+by the synthetic regression tests, not by this successful real-CLI run.
+
+# Synthetic workspace-routing fixture repair — 2026-09-23
+
+The user's subsequent id=3 response exactly matched
+`workspace routing discovery unauthorized (401)` with code `-32603`.
+This identifies the failed operation: workspace routing discovery still received
+401 after the external-token refresh responses. The fixture had configured only
+the local model provider, leaving `chatgpt_base_url` at its default. The matching
+CLI source calls accounts discovery through that separate backend during
+[`account/read`](https://github.com/openai/codex/blob/rust-v0.156.1/codex-rs/app-server/src/request_processors/account_processor/workspace_routing.rs#L295).
+This is a synthetic fixture coverage gap for the installed CLI's routing contract;
+it does not establish a product switching bug or a malformed-token-claim bug.
+
+The verifier now points its ChatGPT backend to the local service, which serves
+`/backend-api/wham/accounts/check` and `/backend-api/wham/config/bundle` only for
+matching synthetic bearer/account-ID pairs. Routing metadata uses the reserved
+HTTPS origin `https://fixture.invalid`; the custom model provider stays at its
+local `/v1` endpoint. The real login and `account/read` RPCs, identity confirmation,
+refresh ordering, timeout/model choices and all original final assertions remain.
+Success additionally requires local routing requests for both alpha and beta.
+
+- New startup-contract regression before the fix: exit 1, failed at local backend
+  configuration. After the fix: exit 0, 1 passed. It launches the actual verifier
+  with a startup-only probe and tests the actual HTTP routes, including rejection
+  of missing or mismatched synthetic credentials; it does not simulate RPC success.
+- `npm test`: exit 0, 71 passed, 0 failed.
+- Syntax check and `git diff --check`: exit 0.
+- Independent GPT-6 Sol review: PASS, no blocking findings; its startup-contract
+  test passed 1/1. The review confirms fixture scope and upstream contract matching,
+  not actual CLI header behavior, config consumption, or the complete model stream.
+- Agent-side `node scripts/verify-live-protocol.mjs --trace`: exit 1 before socket
+  readiness (`Synthetic server startup failed.`, child code 1). No restriction
+  workaround was used; the fixed real-CLI protocol outcome requires a user-side run.
+
+The confirmed 401 has a fixture fix, but full real-CLI protocol success and
+production streaming/token refresh remain unverified at this checkpoint.
+
+# Workspace-routing diagnostic follow-up — 2026-09-23
+
+The user's next real-CLI trace returned id=3, code `-32603`, no error data,
+and no recognized phrase after 1341 ms; both reverse-refresh handlers completed.
+The synthetic run's retained log database contained zero log rows, so it could
+not recover the omitted message. This still does not identify the exact error.
+
+The matching upstream `rust-v0.156.1` source maps `WorkspaceRoutingError` to
+the internal-error response in
+[`get_account`](https://github.com/openai/codex/blob/rust-v0.156.1/codex-rs/app-server/src/request_processors/account_processor/workspace_routing.rs#L157).
+Added that enum's fixed display messages to the diagnostic allowlist and an
+exact-message match indicator. This narrows diagnosis without exposing dynamic
+message suffixes or changing login, account confirmation, routing, or timeouts.
+
+- `node --test test/protocol-diagnostics.test.mjs`: exit 0, 4 passed, 0 failed.
+- `npm test`: exit 0, 70 passed, 0 failed.
+- `git diff --check`: exit 0.
+
+Independent review verified all 22 routing error strings against the upstream
+enum and passed the focused tests (4/4). The exact cause of the RPC error and a
+successful real-CLI/local-service protocol run remain pending a user-side trace.
+No fixture routing behavior has been changed.
+
+# Server-error diagnostics, root cause pending — 2026-09-23
+
+The user's post-`bf20231` trace completed two reverse token-refresh callbacks,
+then received an error response for `account/read` (id=3) after 1034 ms.
+This is distinct from the previous 20-second callback deadlock. The original
+trace suppressed the server's error code and message; no root cause is established.
+
+The synthetic verifier's `--trace` now reports integer RPC error codes, fixed
+allowlisted error phrases, explicitly labeled HTTP statuses, and only the type
+of `error.data`. Arbitrary message text and data remain redacted. Recognized
+phrases identify reported stages/symptoms, not proven causes; an empty list
+requires further evidence. Production `SocketRpc` errors remain sanitized.
+
+- `node --test test/protocol-diagnostics.test.mjs`: exit 0, 3 passed, 0 failed;
+  includes a local Unix WebSocket error response through the real `SocketRpc`,
+  plus suppression of injected credential-like text and malformed fields.
+- `npm test`: exit 0, 69 passed, 0 failed, including existing refresh/deadlock
+  and reply-order regressions.
+- `node --check scripts/verify-live-protocol.mjs` and `git diff --check`: exit 0.
+- Independent GPT-6 Sol review: PASS after correcting null-error trace parity;
+  its focused test run passed 3/3. Review covers diagnostic safety and fidelity,
+  not the unresolved real-CLI failure.
+- Installed CLI: `codex-cli 0.156.1`.
+- Baseline `node scripts/verify-live-protocol.mjs --trace`: exit 1,
+  `Synthetic server startup failed.` The child exited with code 1 before its
+  socket was ready; this run did not expose the underlying startup error.
+  No permission, credential-path, or transport workaround was attempted.
+
+A user-side run with the new diagnostics is pending. The remaining cause
+(product code, synthetic fixture compatibility, or CLI contract change) is
+unresolved. Full real-CLI/local-service protocol success and production
+streaming/token refresh remain unverified. These changes add diagnostics only.
+
 # Reverse-refresh deadlock regression — 2026-09-23
 
 The user's next trace showed two server token-refresh requests during

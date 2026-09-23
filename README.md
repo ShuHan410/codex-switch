@@ -225,6 +225,10 @@ git diff --check
 ```
 
 涉及實驗性即時協定時，再執行 `node scripts/verify-live-protocol.mjs`。
+此驗證使用合成帳號與本機 routing、設定及模型服務，仍由真實 CLI 處理
+登入與 `account/read`；成功不代表正式服務已驗證。
+失敗時可加 `--trace` 查看階段、RPC 錯誤碼與白名單錯誤片語；其他服務端
+訊息一律遮蔽。片語清單為空表示未辨識，不能據此判定失敗原因。
 
 ## 授權
 

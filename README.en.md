@@ -225,6 +225,11 @@ git diff --check
 ```
 
 For changes to the experimental live protocol, also run `node scripts/verify-live-protocol.mjs`.
+This uses synthetic accounts and local routing, configuration and model services;
+the real CLI handles login and `account/read`. Success does not verify production services.
+On failure, add `--trace` for stages, RPC error codes and allowlisted error phrases;
+other server details remain redacted. An empty phrase list means unrecognized text,
+not an established cause.
 
 ## License
 
