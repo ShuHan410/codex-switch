@@ -10,6 +10,27 @@ For change scope, safety and verification rules, read [AGENTS.md](AGENTS.md).
 Do not treat synthetic/local protocol checks as production seamless-switch proof.
 Documentation-only edits need not create another runtime-verification entry.
 
+# Protocol timeout diagnostics — 2026-09-23
+
+The user reran the GPT-6 fixture outside the agent environment and reported
+`Codex service request timed out.` This differs from the startup failure below,
+but the original generic message does not identify which RPC timed out.
+
+The script now includes the RPC method in request failures. Optional `--trace`
+output records method start/completion/failure and elapsed time, local model
+request counts, socket readiness, and child exit status. It never logs RPC
+parameters/results, authorization headers, or raw server stderr. Timeout values,
+transport, model selection, and account-switching logic are unchanged.
+
+- `node --check scripts/verify-live-protocol.mjs`: exit 0.
+- `npm test`: exit 0, 58 passed, 0 failed.
+- `git diff --check`: exit 0.
+
+These checks do not reproduce or resolve the user's real-CLI timeout. A user-side
+rerun of `node scripts/verify-live-protocol.mjs --trace` is needed to identify
+the affected request. The agent-side startup restriction remains unresolved;
+no permission or authentication workaround was attempted.
+
 # GPT-6 protocol fixture model — 2026-09-23
 
 Updated the local protocol fixture's `thread/start` model from `gpt-5.6-terra`

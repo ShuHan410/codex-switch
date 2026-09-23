@@ -9,6 +9,9 @@ import { Pool, codexBinary, codexEnv } from '../src/core.mjs';
 import { SocketRpc, LiveSwitch } from '../src/live.mjs';
 
 process.umask(0o077);
+const trace = process.argv.includes('--trace')
+  ? message => console.error(`[protocol] ${message}`)
+  : () => {};
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-protocol-'));
 const home = path.join(root, 'live'); fs.mkdirSync(home, { mode: 0o700 });
 const socket = path.join(home, 'control.sock');
@@ -31,6 +34,7 @@ const upstream = http.createServer((req, res) => {
   let identity;
   try { identity = JSON.parse(Buffer.from(req.headers.authorization.split('.')[1], 'base64url').toString()).sub; } catch { identity = 'missing'; }
   requests.push(identity);
+  trace(`local model request ${requests.length} received`);
   const id = `resp_${requests.length}`;
   const item = { id: `msg_${requests.length}`, type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'OK', annotations: [] }] };
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
@@ -49,13 +53,32 @@ const server = spawn(codexBinary(), ['app-server', '--listen', `unix://${socket}
   cwd: home, env: { ...codexEnv(home), CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED: '1' }, stdio: ['pipe', 'pipe', 'pipe'],
 });
 server.stdout.resume(); server.stderr.resume();
+server.once('exit', (code, signal) => trace(`app-server exited (code=${code}, signal=${signal})`));
 let rpc, monitor;
 try {
+  trace('waiting for app-server socket');
   for (let i=0; i<200 && !fs.existsSync(socket); i++) {
     if (server.exitCode !== null) throw Error('Synthetic server startup failed.');
     await new Promise(r=>setTimeout(r,50));
   }
-  rpc = new SocketRpc(socket); await rpc.initialize();
+  if (!fs.existsSync(socket)) throw Error('Synthetic server socket did not become ready.');
+  trace('socket ready; connecting');
+  rpc = new SocketRpc(socket);
+  const request = rpc.request.bind(rpc);
+  rpc.request = async (method, params) => {
+    const started = Date.now();
+    trace(`${method} started`);
+    try {
+      const result = await request(method, params);
+      trace(`${method} completed (${Date.now() - started} ms)`);
+      return result;
+    } catch (error) {
+      // Method names are safe to report; request/response bodies contain credentials.
+      trace(`${method} failed (${Date.now() - started} ms)`);
+      throw new Error(`${method}: ${error.message}`, { cause: error });
+    }
+  };
+  await rpc.initialize();
   const limits = name => ({ rateLimits: { primary: { usedPercent: 100-percent[name], resetsAt: Date.now()/1000+3600 } } });
   // Quota is controlled locally; login and all model-turn RPCs use real Codex.
   const adapter = { request: (method, params) => method === 'account/rateLimits/read' ? Promise.resolve(limits(monitor.active.name)) : rpc.request(method, params) };
