@@ -10,6 +10,23 @@ For change scope, safety and verification rules, read [AGENTS.md](AGENTS.md).
 Do not treat synthetic/local protocol checks as production seamless-switch proof.
 Documentation-only edits need not create another runtime-verification entry.
 
+# Account-read timeout follow-up — 2026-09-23
+
+The user's trace completed `initialize` (155 ms) and `account/login/start`
+(44 ms), then timed out on `account/read` (20004 ms). No thread or model turn
+had started, so this is not evidence of a GPT-6 model-request failure.
+
+Extended `--trace` to show whitelisted login/account notifications, reverse
+token-refresh requests and handler progress, and numeric RPC response IDs
+(with string IDs distinguished). No request/response payloads are logged.
+The possible refresh/activation queue cycle noted in the V2 record remains
+unconfirmed for this run; no speculative auth, lock, or timeout change was made.
+
+`node --check scripts/verify-live-protocol.mjs`, `npm test` (58 passed, 0 failed),
+and `git diff --check` exited 0. The timeout remains unresolved pending a
+user-side trace with the additional diagnostics; the real-CLI protocol check
+has not passed in this follow-up.
+
 # Protocol timeout diagnostics — 2026-09-23
 
 The user reran the GPT-6 fixture outside the agent environment and reported

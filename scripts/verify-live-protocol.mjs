@@ -64,6 +64,24 @@ try {
   if (!fs.existsSync(socket)) throw Error('Synthetic server socket did not become ready.');
   trace('socket ready; connecting');
   rpc = new SocketRpc(socket);
+  if (process.argv.includes('--trace')) rpc.ws.on('message', data => {
+    let message;
+    try { message = JSON.parse(data.toString()); } catch { return; }
+    if (!message || typeof message !== 'object' || Array.isArray(message)) return;
+    if (message.method === 'account/chatgptAuthTokens/refresh') {
+      trace('server requested token refresh');
+    } else if (message.method === 'account/login/completed') {
+      trace('server notified login completion');
+    } else if (message.method === 'account/updated') {
+      trace('server notified account update');
+    } else if (!message.method && message.id !== undefined) {
+      // Only numeric RPC IDs are printable; never log arbitrary server data.
+      const id = typeof message.id === 'number' && Number.isSafeInteger(message.id)
+        ? String(message.id) : typeof message.id === 'string' && /^\d{1,12}$/.test(message.id)
+          ? `string:${message.id}` : 'redacted';
+      trace(`server response id=${id} (${message.error ? 'error' : 'result'})`);
+    }
+  });
   const request = rpc.request.bind(rpc);
   rpc.request = async (method, params) => {
     const started = Date.now();
@@ -82,7 +100,19 @@ try {
   const limits = name => ({ rateLimits: { primary: { usedPercent: 100-percent[name], resetsAt: Date.now()/1000+3600 } } });
   // Quota is controlled locally; login and all model-turn RPCs use real Codex.
   const adapter = { request: (method, params) => method === 'account/rateLimits/read' ? Promise.resolve(limits(monitor.active.name)) : rpc.request(method, params) };
-  Object.defineProperty(adapter, 'refresh', { set(value) { rpc.refresh = value; } });
+  Object.defineProperty(adapter, 'refresh', { set(value) {
+    rpc.refresh = async params => {
+      trace('token refresh handler started');
+      try {
+        const result = await value(params);
+        trace('token refresh handler completed');
+        return result;
+      } catch (error) {
+        trace('token refresh handler failed');
+        throw error;
+      }
+    };
+  } });
   monitor = new LiveSwitch(pool, adapter, { probeAccount: async (_pool, name) => ({ ...pool.get(name), state: 'ready', plan: 'plus', checkedAt: new Date().toISOString(), limits: limits(name) }) });
   assert.equal(await monitor.pickAlternative(), true);
   assert.equal(monitor.active.name, 'alpha');
