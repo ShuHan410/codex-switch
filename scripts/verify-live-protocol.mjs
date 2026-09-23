@@ -6,7 +6,7 @@ import http from 'node:http';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { Pool, codexBinary, codexEnv } from '../src/core.mjs';
-import { SocketRpc, LiveSwitch } from '../src/live.mjs';
+import { SocketRpc, LiveSwitch, tokenBundle } from '../src/live.mjs';
 
 process.umask(0o077);
 const trace = process.argv.includes('--trace')
@@ -99,7 +99,10 @@ try {
   await rpc.initialize();
   const limits = name => ({ rateLimits: { primary: { usedPercent: 100-percent[name], resetsAt: Date.now()/1000+3600 } } });
   // Quota is controlled locally; login and all model-turn RPCs use real Codex.
-  const adapter = { request: (method, params) => method === 'account/rateLimits/read' ? Promise.resolve(limits(monitor.active.name)) : rpc.request(method, params) };
+  const adapter = {
+    request: (method, params) => method === 'account/rateLimits/read' ? Promise.resolve(limits(monitor.active.name)) : rpc.request(method, params),
+    drainControllerRequests: () => rpc.drainControllerRequests(),
+  };
   Object.defineProperty(adapter, 'refresh', { set(value) {
     rpc.refresh = async params => {
       trace('token refresh handler started');
@@ -113,7 +116,11 @@ try {
       }
     };
   } });
-  monitor = new LiveSwitch(pool, adapter, { probeAccount: async (_pool, name) => ({ ...pool.get(name), state: 'ready', plan: 'plus', checkedAt: new Date().toISOString(), limits: limits(name) }) });
+  monitor = new LiveSwitch(pool, adapter, {
+    probeAccount: async (_pool, name) => ({ ...pool.get(name), state: 'ready', plan: 'plus', checkedAt: new Date().toISOString(), limits: limits(name) }),
+    // Synthetic tokens are served locally, never sent through OAuth refresh.
+    refreshAccount: async account => tokenBundle(account),
+  });
   assert.equal(await monitor.pickAlternative(), true);
   assert.equal(monitor.active.name, 'alpha');
   const thread = (await rpc.request('thread/start', { model: 'gpt-6-sol', cwd: home, approvalPolicy: 'never', sandbox: 'read-only', ephemeral: true })).thread;

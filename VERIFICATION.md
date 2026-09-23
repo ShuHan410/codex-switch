@@ -10,6 +10,38 @@ For change scope, safety and verification rules, read [AGENTS.md](AGENTS.md).
 Do not treat synthetic/local protocol checks as production seamless-switch proof.
 Documentation-only edits need not create another runtime-verification entry.
 
+# Reverse-refresh deadlock regression — 2026-09-23
+
+The user's next trace showed two server token-refresh requests during
+`account/read`; both handlers started but failed only after the read timed out.
+The controller queued these callbacks behind the activation that was waiting
+for their replies. A bounded regression reproduced this dependency cycle in
+both `account/login/start` and `account/read` on the previous implementation.
+
+Refresh callbacks now run in a separate serialized queue and can use a locked,
+validated pending candidate before login confirmation. Activation drains old
+refresh work and its controller replies before submitting a different account.
+Active-account confirmation remains mandatory; failed activation retains leases
+and pauses switching. Shutdown waits for refresh work and rejects late tokens.
+The protocol fixture injects a synthetic refresh callback instead of launching
+OAuth refresh with its fake tokens.
+
+- Before the fix, `node --test test/live.test.mjs`: exit 1; 4 of 13 tests failed,
+  including both callback deadlocks and a late refresh result after close.
+- A subsequent ordering regression caught a new-login message preceding the old
+  refresh reply. Tracking controller replies fixed that ordering; a local Unix
+  WebSocket fixture independently checks the received message order.
+- Final `node --test test/live.test.mjs`: exit 0, 16 passed, 0 failed.
+- `npm test`: exit 0, 66 passed, 0 failed.
+- `git diff --check`: exit 0.
+
+All automated tests use synthetic accounts and local services. A user-side rerun
+of `node scripts/verify-live-protocol.mjs --trace` is pending; the agent-side
+Codex socket-startup restriction was not bypassed. Production token refresh and
+streaming remain unverified. A cross-family Claude Opus review identified the
+reply-ordering issue above; a fresh GPT-6 Sol review of the corrected code and
+WebSocket regression returned PASS with no further blocking findings.
+
 # Account-read timeout follow-up — 2026-09-23
 
 The user's trace completed `initialize` (155 ms) and `account/login/start`

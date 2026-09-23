@@ -11,6 +11,7 @@ import {
 export class SocketRpc extends EventEmitter {
   constructor(socket, timeout = 20000) {
     super(); this.timeout = timeout; this.pending = new Map(); this.id = 0;
+    this.controllerRequests = new Set();
     this.ws = new WebSocket(`ws+unix:${socket}:/`, { perMessageDeflate: false, handshakeTimeout: 5000, maxPayload: 32 * 1024 * 1024 });
     this.opened = new Promise((resolve, reject) => {
       this.ws.once('open', resolve);
@@ -24,10 +25,13 @@ export class SocketRpc extends EventEmitter {
       if (!msg || typeof msg !== 'object' || Array.isArray(msg)) return;
       if (msg.method && msg.id !== undefined) {
         const handle = msg.method === 'account/chatgptAuthTokens/refresh' && this.refresh;
-        Promise.resolve().then(() => {
+        const work = Promise.resolve().then(() => {
           if (!handle) throw new Failure('Unsupported controller request.');
           return handle(msg.params);
-        }).then(result => this.send({ id: msg.id, result }), () => this.send({ id: msg.id, error: { code: -32000, message: 'Account refresh unavailable.' } }));
+        }).then(result => this.send({ id: msg.id, result }), () => this.send({ id: msg.id, error: { code: -32000, message: 'Account refresh unavailable.' } }))
+          .catch(() => {});
+        this.controllerRequests.add(work);
+        void work.then(() => this.controllerRequests.delete(work));
       } else if (msg.method) this.emit('notification', msg);
       else {
         const p = this.pending.get(msg.id); if (!p) return;
@@ -51,6 +55,7 @@ export class SocketRpc extends EventEmitter {
     await this.request('initialize', { clientInfo: { name: 'codex_switch_live', version: '0.4.0' }, capabilities: { experimentalApi: true } });
     this.send({ method: 'initialized', params: {} });
   }
+  async drainControllerRequests() { await Promise.all([...this.controllerRequests]); }
   fail() {
     for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(new Failure('Private Codex service disconnected.')); }
     this.pending.clear();
@@ -81,12 +86,33 @@ export class LiveSwitch {
     this.probeAccount = probeAccount; this.refreshAccount = refreshAccount; this.record = record;
     this.active = null; this.leases = new Map(); this.closed = false; this.halted = false;
     this.serial = Promise.resolve(); this.tickPromise = null;
-    rpc.refresh = params => this.exclusive(async () => {
-      if (!this.active || this.closed || this.halted) throw new Failure('No active managed account.');
-      const current = tokenBundle(this.active);
+    this.refreshSerial = Promise.resolve(); this.refreshBlocked = false;
+    this.pendingAccount = null; this.authGeneration = 0;
+    rpc.refresh = params => this.refresh(params);
+  }
+  refresh(params) {
+    const account = this.pendingAccount || this.active;
+    const generation = this.authGeneration;
+    if (!account || this.closed || this.halted || this.refreshBlocked)
+      return Promise.reject(new Failure('No active managed account.'));
+    const validate = () => {
+      if (this.closed || this.halted || generation !== this.authGeneration || !this.leases.has(account.name))
+        throw new Failure('Account refresh no longer belongs to the current login.');
+      return tokenBundle(account);
+    };
+    // Reverse RPCs must not queue behind a login waiting for their response.
+    // Serialize refreshes separately and drain them before changing accounts.
+    const next = this.refreshSerial.then(async () => {
+      const current = validate();
       if (params?.previousAccountId && params.previousAccountId !== current.chatgptAccountId) return current;
-      return await this.refreshAccount(this.active);
+      const result = await this.refreshAccount(account);
+      const registered = validate();
+      if (result?.chatgptAccountId !== registered.chatgptAccountId || typeof result.accessToken !== 'string' || !result.accessToken)
+        throw new Failure('Account refresh returned an unexpected identity.');
+      return result;
     });
+    this.refreshSerial = next.catch(() => {});
+    return next;
   }
   exclusive(operation) {
     const next = this.serial.then(operation);
@@ -109,11 +135,20 @@ export class LiveSwitch {
         if (!choose([checked], this.min)) {
           this.leases.get(name)(); this.leases.delete(name); return false;
         }
+        // Stop admitting old-account refreshes before draining existing work.
+        this.refreshBlocked = true;
+        await this.refreshSerial;
+        await this.rpc.drainControllerRequests?.();
+        if (this.closed || this.halted) throw new Failure('Account switch was cancelled.');
         const bundle = tokenBundle(checked);
         const previous = this.active;
+        this.pendingAccount = checked;
+        this.authGeneration++;
+        this.refreshBlocked = false;
         submitted = true;
         await this.rpc.request('account/login/start', { type: 'chatgptAuthTokens', ...bundle });
         const visible = (await this.rpc.request('account/read', { refreshToken: false })).account;
+        if (this.closed || this.halted) throw new Failure('Account switch was cancelled.');
         if (visible?.type !== 'chatgpt' || visible.email !== checked.email) throw new Failure('Live account identity confirmation failed.');
         this.active = checked;
         if (previous && previous.name !== name) { this.leases.get(previous.name)?.(); this.leases.delete(previous.name); }
@@ -127,6 +162,9 @@ export class LiveSwitch {
           throw error;
         }
         this.leases.get(name)?.(); this.leases.delete(name); return false;
+      } finally {
+        this.pendingAccount = null;
+        this.refreshBlocked = false;
       }
     });
   }
@@ -174,6 +212,8 @@ export class LiveSwitch {
   async close() {
     this.closed = true;
     await this.tickPromise?.catch(() => {}); await this.serial;
+    await this.refreshSerial;
+    await this.rpc.drainControllerRequests?.();
     for (const release of this.leases.values()) release(); this.leases.clear();
   }
 }

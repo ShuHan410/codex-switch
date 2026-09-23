@@ -178,6 +178,8 @@ Use this command to start Codex for a long-running task that cannot restart the 
 
 Before a long task, run `codex-switch usage --all` to confirm that candidate accounts exist, then consider raising the threshold and shortening the polling interval. A candidate must itself meet the threshold, so do not raise the threshold above the remaining amount of every account. At startup, `run --auto` selects the eligible account with the most remaining usage. When all accounts have ample usage, merely raising the threshold may not immediately produce a second switch with real accounts. This project uses `node scripts/verify-live-protocol.mjs` with synthetic local usage data to reproducibly verify same-thread switching.
 
+Codex token-refresh requests can be handled while login confirmation is pending. Automatic switching pauses if the new account cannot be confirmed.
+
 This interface remains experimental. It cannot take over a process started by ordinary `codex`; long-running refresh and streaming switches against the production service have not been fully verified; ambiguous accounts with the same email but different workspaces are excluded; and only interactive terminals are supported. When restarting Codex after a switch is acceptable, the simpler `auto` mode remains the more conservative choice.
 
 ## Data and security

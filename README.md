@@ -178,6 +178,8 @@ codex-switch run --auto -- resume --last
 
 長任務可先執行 `codex-switch usage --all`，確認有候選帳號後提高門檻並縮短輪詢間隔。候選帳號本身也必須至少達到門檻，因此不要把門檻提高到所有帳號的剩餘量以上。`run --auto` 啟動時會先選剩餘量最高的合格帳號；帳號都充足時，單純提高門檻不一定能在真實帳號上立即製造第二次切換。本專案以本機合成額度的 `node scripts/verify-live-protocol.mjs` 做可重現的同 thread 切換驗證。
 
+登入確認期間亦可回應 Codex 的憑證更新要求；無法確認新帳號時會暫停自動切換。
+
 此介面仍屬 experimental：無法接管已由一般 `codex` 啟動的程序；正式服務的長時間刷新與串流切換尚未完整驗收；同 email、不同 workspace 的歧義帳號會被排除；只支援互動式終端。可以接受切換後重啟 Codex 時，較簡單的 `auto` 仍是較保守的選擇。
 
 ## 資料與安全
