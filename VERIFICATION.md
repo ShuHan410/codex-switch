@@ -10,6 +10,29 @@ For change scope, safety and verification rules, read [AGENTS.md](AGENTS.md).
 Do not treat synthetic/local protocol checks as production seamless-switch proof.
 Documentation-only edits need not create another runtime-verification entry.
 
+# GPT-6 protocol fixture model — 2026-09-23
+
+Updated the local protocol fixture's `thread/start` model from `gpt-5.6-terra`
+to `gpt-6-sol`. Account-switching implementation and user defaults are unchanged.
+
+- `npm test`: exit 0, 58 passed, 0 failed, using the existing installed dependencies.
+- Installed CLI: `codex-cli 0.156.1`.
+- `node scripts/verify-live-protocol.mjs`: exit 1 before any model turn;
+  `Synthetic server startup failed.` A focused startup reproduction captured
+  `app-server socket directory must be a user-owned directory with mode 0700`.
+  Both the synthetic scratch directory and its `live` home were owned by the
+  current user with mode `0700`; the remaining cause was not established.
+  No permission, credential path, or transport workaround was attempted.
+- Dependency installation in an isolated worktree was stopped after npm reported
+  a read-only default cache. Runtime checks above used the main checkout's
+  existing installation; dependencies and the lockfile were not changed.
+
+Only temporary synthetic accounts and a localhost fixture were used. The updated
+model pin has not passed the real-CLI protocol check in this environment;
+production GPT-6 requests, streaming, token refresh, and seamless switching
+remain unverified. Re-run the protocol check after the startup restriction is
+resolved; older successful protocol records below do not validate this change.
+
 # Running-session account boundary — 2026-09-19
 
 Diagnosed with installed `codex-cli 0.155.1`, synthetic account tokens and a

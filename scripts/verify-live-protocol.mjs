@@ -63,7 +63,7 @@ try {
   monitor = new LiveSwitch(pool, adapter, { probeAccount: async (_pool, name) => ({ ...pool.get(name), state: 'ready', plan: 'plus', checkedAt: new Date().toISOString(), limits: limits(name) }) });
   assert.equal(await monitor.pickAlternative(), true);
   assert.equal(monitor.active.name, 'alpha');
-  const thread = (await rpc.request('thread/start', { model: 'gpt-5.6-terra', cwd: home, approvalPolicy: 'never', sandbox: 'read-only', ephemeral: true })).thread;
+  const thread = (await rpc.request('thread/start', { model: 'gpt-6-sol', cwd: home, approvalPolicy: 'never', sandbox: 'read-only', ephemeral: true })).thread;
   async function turn() {
     const done = new Promise((resolve, reject) => {
       const timer = setTimeout(() => { rpc.off('notification', listener); reject(Error('Synthetic turn timed out.')); }, 20000);
